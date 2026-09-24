@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# 训练/运行产物
+log.txt
+output/
+outputs/
+wandb/
+runs/
+
+# 环境/缓存
+.venv/
+.cache/
