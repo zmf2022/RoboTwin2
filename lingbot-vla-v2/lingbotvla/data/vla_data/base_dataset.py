@@ -189,7 +189,8 @@ class VLADataset(Dataset):
                         processor, disabled_image_features, do_nomalize, \
                         chunk_size=chunk_size, return_item_befor_padding=return_item,\
                         image_augment=image_augment, use_depth_align=use_depth_align,
-                        use_future_image=use_future_image)
+                        use_future_image=use_future_image,
+                        norm_stats_path=getattr(dataset_config, 'norm_stats_file', None))
         else:
             self.feature_transform = feature_transform
 

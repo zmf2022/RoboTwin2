@@ -8,6 +8,7 @@ __pycache__/
 log.txt
 output/
 outputs/
+output_*/
 wandb/
 runs/
 

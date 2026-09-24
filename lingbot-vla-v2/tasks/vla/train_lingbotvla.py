@@ -138,6 +138,18 @@ class MyTrainingArguments(TrainingArguments):
         default=True,
         metadata={"help": "Train state proj only or not."},
     )
+    lora_rank: int = field(
+        default=0,
+        metadata={"help": "LoRA rank on the VLM language model (0 = off). The whole VLM is frozen except LoRA."},
+    )
+    lora_alpha: float = field(
+        default=64.0,
+        metadata={"help": "LoRA alpha; scale = lora_alpha / lora_rank."},
+    )
+    lora_target_modules: List[str] = field(
+        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        metadata={"help": "Linear names in the VLM language model that get LoRA."},
+    )
     tokenizer_max_length: int = field(
         default=48,
         metadata={"help": "Maximum length of the tokenizer."},
@@ -415,6 +427,14 @@ def main():
         if use_future_video:
             print('====Loading Future Video Model====')
             video_teacher = build_video_model(args.train.align_params['video'])
+    if args.train.lora_rank > 0:
+        if args.train.train_expert_only:
+            raise ValueError("lora_rank > 0 and train_expert_only are mutually exclusive.")
+        from lingbotvla.utils.vla_lora import inject_lora
+        n_lora = inject_lora(model, args.train.lora_rank, args.train.lora_alpha, args.train.lora_target_modules)
+        # LoRA matrices go to AdamW, not Muon
+        args.train.muon_exclude_name_patterns = list(args.train.muon_exclude_name_patterns or []) + ["lora_"]
+        logger.info_rank0(f"LoRA r={args.train.lora_rank} alpha={args.train.lora_alpha}: {n_lora / 1e6:.1f}M params")
     from lingbotvla.utils.moe_utils import log_model_param_stats
     log_model_param_stats(model)
 

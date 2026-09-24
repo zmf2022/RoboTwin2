@@ -13,6 +13,7 @@ import torch.distributed as dist
 from lingbotvla.checkpoint import ckpt_to_state_dict
 from lingbotvla.models import save_model_weights
 from lingbotvla.utils import helper
+from lingbotvla.utils.vla_lora import merge_lora_state_dict
 
 
 def _log(logger: Any, level: str, message: str, *args: Any) -> None:
@@ -321,6 +322,7 @@ class AsyncHFCheckpointSaver:
                 ckpt_manager=ckpt_manager,
                 ema=ema,
             )
+            state_dict = merge_lora_state_dict(state_dict)
             save_kwargs = {"model_assets": model_assets}
             if enable_fp32:
                 save_kwargs["save_dtype"] = torch.float32
