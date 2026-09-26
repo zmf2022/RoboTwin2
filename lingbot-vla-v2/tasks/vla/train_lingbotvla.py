@@ -851,19 +851,24 @@ def main():
                 with model_bwd_context:
                     loss.backward()
 
-                total_loss += loss.item()
-                total_vla_loss += vla_loss.item()
+                # Accumulate on GPU in float64 (same arithmetic as summing .item() Python floats) so the host
+                # syncs once per step instead of after every micro batch's backward.
+                total_loss += loss.detach().double()
+                total_vla_loss += vla_loss.detach().double()
                 if not (isinstance(depth_loss, int) or isinstance(depth_loss, float)):
-                    total_depth_loss += depth_loss.item()
+                    total_depth_loss += depth_loss.detach().double()
                 if not (isinstance(future_depth_loss, int) or isinstance(future_depth_loss, float)):
-                    total_future_depth_loss += future_depth_loss.item()
+                    total_future_depth_loss += future_depth_loss.detach().double()
                 if not (isinstance(future_video_loss, int) or isinstance(future_video_loss, float)):
-                    total_future_video_loss += future_video_loss.item()
+                    total_future_video_loss += future_video_loss.detach().double()
                 if not (isinstance(seq_wise_loss, int) or isinstance(seq_wise_loss, float)):
-                    total_seq_wise_loss += seq_wise_loss.item()
+                    total_seq_wise_loss += seq_wise_loss.detach().double()
                 if not (isinstance(router_z_loss, int) or isinstance(router_z_loss, float)):
-                    total_router_z_loss += router_z_loss.item() / len(micro_batches)
+                    total_router_z_loss += router_z_loss.detach().double() / len(micro_batches)
                 del micro_batch
+            total_loss, total_vla_loss, total_depth_loss, total_future_depth_loss, total_future_video_loss, total_seq_wise_loss, total_router_z_loss = (
+                float(v) for v in (total_loss, total_vla_loss, total_depth_loss, total_future_depth_loss, total_future_video_loss, total_seq_wise_loss, total_router_z_loss)
+            )
             # --- TEMP gate-gradient probe (GATE_GRAD_PROBE=1): dump router gate grad
             # magnitude vs routed-expert grad, plus per-expert symmetry, pre-clip. ---
             if os.environ.get("GATE_GRAD_PROBE") and global_step < 12:

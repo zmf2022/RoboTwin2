@@ -887,7 +887,8 @@ class FlowMatchingV2(FlowMatchingV1):
                 align_metrics["align/future_video_loss_weighted"] = (loss_video * video_weight).detach()
                 align_metrics["align/video_loss"] = video_total_loss.detach()
                 align_metrics["align/video_loss_weighted"] = loss_future_video.detach()
-            self.steps += 1
+            # No `self.steps += 1` here: nothing reads it, and mutating an int module attribute inside the
+            # compiled forward recompiles every step until recompile_limit, after which this frame runs eagerly.
         else:
             loss_depth = 0
             loss_future_depth = 0

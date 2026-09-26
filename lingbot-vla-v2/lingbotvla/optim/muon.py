@@ -529,9 +529,29 @@ class DistributedMuon(Optimizer):
             stacked_full = torch.cat(real_chunks, dim=gather_dim)
         del gather_list
 
-        # Phase 3: Batched Newton-Schulz
-        stacked_ortho = batched_newton_schulz(stacked_full, ns_coefficients, ns_steps, eps)
+        # Phase 3: Batched Newton-Schulz, split across ranks. NS is independent per matrix,
+        # so each rank orthogonalizes a contiguous slice of the N matrices and the results
+        # are all-gathered, instead of every rank redundantly orthogonalizing all N.
+        num_mats = stacked_full.size(0)
+        per_rank = (num_mats + world_size - 1) // world_size
+        own_start = min(rank * per_rank, num_mats)
+        own_end = min(own_start + per_rank, num_mats)
+        # NS computes in bf16 and casts back, so gathering its output as bf16 is lossless.
+        own_ortho = torch.zeros(
+            (per_rank, *stacked_full.shape[1:]), dtype=torch.bfloat16, device=stacked_full.device
+        )
+        if own_end > own_start:
+            own_ortho[: own_end - own_start] = batched_newton_schulz(
+                stacked_full[own_start:own_end], ns_coefficients, ns_steps, eps, compute_dtype=torch.bfloat16
+            )
+        ortho_dtype = stacked_full.dtype
         del stacked_full
+
+        ortho_list = [torch.empty_like(own_ortho) for _ in range(world_size)]
+        dist.all_gather(ortho_list, own_ortho, group=pg)
+        del own_ortho
+        stacked_ortho = torch.cat(ortho_list, dim=0)[:num_mats].to(ortho_dtype)
+        del ortho_list
 
         # Phase 4: Local scatter + apply update
         chunk_floor = global_dim_size // world_size
