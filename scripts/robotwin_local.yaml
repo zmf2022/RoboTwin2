@@ -9,7 +9,7 @@ model:
 data:
   datasets_type: vla
   data_name: robotwin
-  train_path: ~/embodiedai/RoboTwin2/data/training_data/RoboTwin_lerobot_v30
+  train_path: ~/embodiedai/RoboTwin2/data/training_data/RoboTwin_lerobot_v30_fixed  # scripts/fix_v30_videos.py
   robot_config_root: ./configs/robot_configs
   norm_stats_file: assets/norm_stats/robotwin_clean.json # recomputed on clean data only (official robotwin.json includes randomized)
   joints:
