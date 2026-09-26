@@ -46,8 +46,10 @@ export LINGBOT_CLI_YAML="$(realpath "$CLI_YAML")"
 echo "model: $MODEL_PATH"
 echo "config: $LINGBOT_CLI_YAML"
 
+set +u  # conda (de)activate.d scripts reference unset vars
 eval "$(conda shell.bash hook)"
 conda activate "${CONDA_ENV:-robotwin}"
+set -u
 
 NUM_SLOTS=$((NUM_GPUS * CLIENTS_PER_GPU))
 for ((g = 0; g < NUM_GPUS; g++)); do
