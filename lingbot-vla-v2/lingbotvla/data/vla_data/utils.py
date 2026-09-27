@@ -110,7 +110,10 @@ class FeatureTransform:
 
         if not disabled_image_features:
             self.image_augment = image_augment
-        
+        # built lazily on the first training sample, so inference never touches its assets
+        self.random_aug_config = getattr(data_config, 'random_aug_config', None)
+        self.random_aug = None
+
         # keep the self.feature_to_keep in lerobot item when convert to new item
         self.feature_to_keep = set([
             'timestamp',
@@ -404,8 +407,14 @@ class FeatureTransform:
             return item
 
         batch_dict = self.pad_and_concat(item, w_action)
+        if self.random_aug_config and w_action:
+            if self.random_aug is None:
+                from .random_aug import RandomSceneAugmentor
+                self.random_aug = RandomSceneAugmentor(self.random_aug_config)
+            self.random_aug(batch_dict, episode_index=item.get('episode_index'), frame_index=item.get('frame_index'),
+                            future_offset=self.chunk_size - 1 if self.use_future_image else None)
 
-        state = prepare_state(batch_dict, self.model_config.max_state_dim) 
+        state = prepare_state(batch_dict, self.model_config.max_state_dim)
         actions = prepare_action(batch_dict, self.model_config.max_action_dim)
         return_image_grid_thw = getattr(self.model_config, "return_image_grid_thw", False)
         if not self.disabled_image_features:

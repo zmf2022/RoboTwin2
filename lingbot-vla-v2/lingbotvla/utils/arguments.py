@@ -240,6 +240,16 @@ class DataArguments:
             )
         },
     )
+    random_aug_config: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": (
+                "YAML config of the clean -> randomized scene augmentation "
+                "(lingbotvla/data/vla_data/random_aug.py, e.g. scripts/random_aug/random_aug.yaml). "
+                "None disables it."
+            )
+        },
+    )
     def __post_init__(self):
         if self.text_keys is None:
             if self.data_type == "plaintext":
