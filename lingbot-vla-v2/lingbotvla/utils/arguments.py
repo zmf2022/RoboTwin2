@@ -487,6 +487,10 @@ class TrainingArguments:
         default=0,
         metadata={"help": "Number of steps between two checkpoint saves."},
     )
+    save_total_limit: int = field(
+        default=0,
+        metadata={"help": "Keep only the newest N global_step_* checkpoints; older ones are deleted after each save (0 = keep all)."},
+    )
     save_epochs: int = field(
         default=1,
         metadata={"help": "Number of epochs between two checkpoint saves."},

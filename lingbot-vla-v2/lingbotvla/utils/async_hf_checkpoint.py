@@ -177,6 +177,10 @@ class AsyncHFCheckpointSaver:
             "failures": [asdict(item) for item in self._results if item.error],
         }
 
+    def pending_paths(self) -> set[str]:
+        """Checkpoint dirs whose HF conversion is still running (it reads their DCP state)."""
+        return {path for path, future in self._futures if not future.done()}
+
     def _pending_count(self) -> int:
         return sum(1 for _, future in self._futures if not future.done())
 

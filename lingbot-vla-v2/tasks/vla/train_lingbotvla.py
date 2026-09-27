@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from functools import partial
@@ -648,6 +649,21 @@ def main():
             epoch_step=epoch_step,
         )
 
+    def rotate_checkpoints() -> None:
+        """save_total_limit: keep the newest N global_step_* dirs (rank 0, after each save)."""
+        limit = args.train.save_total_limit
+        if not limit or args.train.global_rank != 0:
+            return
+        root = args.train.save_checkpoint_path
+        steps = sorted(int(m.group(1)) for d in os.listdir(root) if (m := re.fullmatch(r"global_step_(\d+)", d)))
+        pending = hf_saver.pending_paths()
+        for step in steps[:-limit]:
+            path = os.path.abspath(os.path.join(root, f"global_step_{step}"))
+            if path in pending:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            logger.info_rank0(f"save_total_limit={limit}: removed {path}")
+
     environ_meter = helper.EnvironMeter(
         config=model_config,
         global_batch_size=args.train.global_batch_size,
@@ -1145,6 +1161,7 @@ def main():
                     current_epoch_for_eval,
                     current_epoch_step_for_eval,
                 )
+                rotate_checkpoints()
 
             if args.train.max_steps is not None and global_step >= args.train.max_steps:
                 logger.info_rank0(f"Reached max_steps={args.train.max_steps}, stopping training.")
@@ -1184,6 +1201,7 @@ def main():
                     current_epoch_for_eval,
                     current_epoch_step_for_eval,
                 )
+                rotate_checkpoints()
             break
         if args.train.save_epochs and (epoch + 1) % args.train.save_epochs == 0:
             helper.empty_cache()
@@ -1210,6 +1228,7 @@ def main():
                 current_epoch_for_eval,
                 current_epoch_step_for_eval,
             )
+            rotate_checkpoints()
 
     if max_steps_driven:
         data_loader_tqdm.close()
