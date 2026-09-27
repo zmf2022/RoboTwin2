@@ -127,6 +127,11 @@ class MyTrainingArguments(TrainingArguments):
         default=1e-6,
         metadata={"help": "Maximum learning rate for vit parameters."},
     )
+    vlm_lr_scale: float = field(
+        default=1.0,
+        metadata={"help": "LR multiplier for the VLM (vision tower + language model) in full fine-tuning; "
+                          "LoRA adapters are not scaled. Only with optimizer=muon."},
+    )
     freeze_vision_encoder: bool = field(
         default=False,
         metadata={"help": "Whether or not to freeze the vision encoder in PI0 model."},
@@ -522,6 +527,8 @@ def main():
             f"MoE expert LR scaling enabled: {n_expert} expert param tensors use scaled LR. "
             f"Groups: {group_summary}"
         )
+    if args.train.vlm_lr_scale != 1.0 and args.train.optimizer != "muon":
+        raise ValueError(f"vlm_lr_scale is only implemented for optimizer=muon, not {args.train.optimizer}")
     if args.train.optimizer == "muon":
         optimizer = build_muon_optimizer(
             model,
