@@ -9,7 +9,8 @@ files and the episodes' video from/to timestamps change. The two archives order 
 differently, so episodes are matched by their state / action arrays.
 
     hf download TianxingChen/RoboTwin2.0 lerobot_dataset/RoboTwin_lerobot_v21.zip --repo-type dataset --local-dir data
-    python scripts/fix_v30_videos.py          # -> data/training_data/RoboTwin_lerobot_v30_fixed
+    mv data/training_data/RoboTwin_lerobot_v30 data/training_data/RoboTwin_lerobot_v30_old
+    python scripts/fix_v30_videos.py          # _old -> data/training_data/RoboTwin_lerobot_v30
 """
 
 import argparse
@@ -118,9 +119,9 @@ def verify(out_dir, zf, mapping, cams, video21, short, num, seed):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--v30", default=str(REPO / "data/training_data/RoboTwin_lerobot_v30"))
+    p.add_argument("--v30", default=str(REPO / "data/training_data/RoboTwin_lerobot_v30_old"))
     p.add_argument("--v21_zip", default=str(REPO / "data/lerobot_dataset/RoboTwin_lerobot_v21.zip"))
-    p.add_argument("--out", default=str(REPO / "data/training_data/RoboTwin_lerobot_v30_fixed"))
+    p.add_argument("--out", default=str(REPO / "data/training_data/RoboTwin_lerobot_v30"))
     p.add_argument("--verify", type=int, default=100, help="episodes per camera to compare against v2.1")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
