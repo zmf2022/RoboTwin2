@@ -215,7 +215,9 @@ class Base_Task(gym.Env):
         sapien.render.set_camera_shader_dir("rt")
         sapien.render.set_ray_tracing_samples_per_pixel(32)
         sapien.render.set_ray_tracing_path_depth(8)
-        sapien.render.set_ray_tracing_denoiser("oidn")
+        # SAPIEN's bundled OIDN 2.0.1 fails on Blackwell (compute capability >= 10, "unsupported device
+        # type: CUDA") and leaves frames undenoised; OptiX (from the NVIDIA driver) works there
+        sapien.render.set_ray_tracing_denoiser("optix" if torch.cuda.get_device_capability()[0] >= 10 else "oidn")
 
         # declare sapien scene
         scene_config = sapien.SceneConfig()
