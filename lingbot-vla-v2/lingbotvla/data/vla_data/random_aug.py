@@ -13,7 +13,9 @@ simulates the demo_randomized setting:
 - instruction: LLM paraphrases of the training instruction.
 
 All parameters are sampled once per sample and shared by the current and future frame, so the
-future-frame depth / video targets stay consistent with the augmented current frame.
+future-frame depth / video targets stay consistent with the augmented current frame. With
+``teacher_clean`` the depth / video teachers see the frames before randomization instead, so the
+student learns clean-scene targets from randomized inputs.
 """
 
 import copy
@@ -36,6 +38,10 @@ logger = logging.get_logger(__name__)
 DEFAULTS = {
     # probability that a sample gets the image randomization at all (the rest stays clean)
     "prob": 0.5,
+    # depth / video distillation teachers get the frames before random_aug and image_augment
+    # (FeatureTransform keeps a copy); False = teachers see what the student sees. The targets are
+    # patch-wise, so keep geometry.prob at 0 with it
+    "teacher_clean": False,
     # substrings of the image keys identifying the fixed head camera / the wrist cameras
     "head_keys": ["camera_top", "cam_high"],
     "wrist_keys": ["wrist"],
@@ -512,8 +518,11 @@ class RandomSceneAugmentor:
                 self.paraphrases = {k.strip(): v for k, v in json.load(f).items() if v}
         if self.head_ref is None and (cfg["background"]["prob"] > 0 or cfg["distractor"]["prob"] > 0):
             logger.warning("random_aug: mask.head_ref not set, head camera uses the colour-based mask")
+        if cfg["teacher_clean"] and cfg["geometry"]["prob"] > 0:
+            logger.warning("random_aug: teacher_clean with geometry.prob > 0 misaligns the patch-wise depth / DINO "
+                           "targets (clean frame) with the scaled / shifted student frame")
         logger.info(
-            f"random_aug: prob={cfg['prob']} arm_masks={self.arm_masks is not None} "
+            f"random_aug: prob={cfg['prob']} teacher_clean={cfg['teacher_clean']} arm_masks={self.arm_masks is not None} "
             f"textures={len(self.textures.files)} files + procedural, "
             f"distractors={len(self.distractors) if self.distractors else 0}, paraphrased instructions={len(self.paraphrases)}"
         )
