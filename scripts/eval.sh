@@ -2,8 +2,12 @@
 # Full LingBot-VLA 2.0 evaluation on this repo: 50 tasks x {demo_clean, demo_randomized} x 100 episodes, FP32.
 # Usage: bash scripts/eval.sh <model_dir> [num_gpus] [clients_per_gpu]
 #   one inference server per GPU; clients_per_gpu sim clients share it (sim is CPU-bound, ~1 core each)
+#   clients take jobs from one queue over all settings x tasks; a client whose log has not grown for STALL_SEC
+#   (default 900) is treated as hung, killed and retried, resuming from its progress.jsonl
+#   randomized renders use more GPU memory: RAND_CLIENTS_PER_GPU (default clients_per_gpu) caps the clients running
+#   on a GPU when a randomized job is started there
 #   model_dir: .../checkpoints/global_step_N/hf_ckpt (fine-tuned) or a flat model dir (e.g. the base model)
-# Env overrides: CLI_YAML, OUTPUT_BASE, QWEN3VL_PATH, TASK_CONFIGS, TASKS, TEST_NUM, USE_LENGTH, NUM_STEPS, VIDEO, CONDA_ENV
+# Env overrides: CLI_YAML, OUTPUT_BASE, QWEN3VL_PATH, TASK_CONFIGS, TASKS, TEST_NUM, USE_LENGTH, NUM_STEPS, VIDEO, STALL_SEC, RAND_CLIENTS_PER_GPU, CONDA_ENV
 #   non-default USE_LENGTH / NUM_STEPS (denoising steps, model default 10) are appended to the run name
 set -uo pipefail
 
@@ -11,12 +15,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_PATH="$(realpath "${1:?model dir}")"
 NUM_GPUS="${2:-$(nvidia-smi -L | wc -l)}"
 CLIENTS_PER_GPU="${3:-1}"
+RAND_CLIENTS_PER_GPU="${RAND_CLIENTS_PER_GPU:-$CLIENTS_PER_GPU}"
 OUTPUT_BASE="${OUTPUT_BASE:-$ROOT/eval_result}"
 TASK_CONFIGS="${TASK_CONFIGS:-demo_clean demo_randomized}"
 USE_LENGTH="${USE_LENGTH:-50}"
 NUM_STEPS="${NUM_STEPS:-}"
 VIDEO="${VIDEO:-1}"
 TEST_NUM="${TEST_NUM:-100}"
+STALL_SEC="${STALL_SEC:-900}"
 export QWEN3VL_PATH="${QWEN3VL_PATH:-/mnt/datadisk/models/lingbot-vla/Qwen3-VL-4B-Instruct}"
 export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
 MAX_RETRIES=3
@@ -44,6 +50,7 @@ else
   CLI_YAML="$ROOT/scripts/lingbotvla_cli_base.yaml"
   NAME="$(basename "$MODEL_PATH")"
 fi
+[[ $(basename "$MODEL_PATH") == ema_hf_ckpt ]] && NAME+="_ema"
 [[ $USE_LENGTH != 50 ]] && NAME+="_len$USE_LENGTH"
 [[ -n $NUM_STEPS ]] && NAME+="_ns$NUM_STEPS"
 export LINGBOT_CLI_YAML="$(realpath "$CLI_YAML")"
@@ -66,7 +73,7 @@ RUN_DIR="$OUTPUT_BASE/${NAME}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_DIR/inference_logs"
 echo "run dir: $RUN_DIR"
 
-declare -a SERVER_PID SLOT_PID SLOT_TASK
+declare -a SERVER_PID SLOT_PID SLOT_JOB SLOT_T0
 cleanup() {
   for p in "${SLOT_PID[@]}" "${SERVER_PID[@]}"; do [[ -n "$p" && "$p" != 0 ]] && kill -- -"$p" 2>/dev/null; done
 }
@@ -88,27 +95,38 @@ launch() {  # slot task_config task
     --task_name "$t" --task_config "$tc" --port $((9330 + s % NUM_GPUS)) \
     --output_dir "$RUN_DIR/$tc/eval_results" --video "$VIDEO" --test_num "$TEST_NUM" >> "$RUN_DIR/$tc/eval_logs/$t.log" 2>&1 &
   SLOT_PID[$s]=$!
-  SLOT_TASK[$s]="$t"
+  SLOT_JOB[$s]="$tc/$t"
+  SLOT_T0[$s]=$(date +%s)
 }
 
+declare -A RETRY=()
+queue=()
 for TC in $TASK_CONFIGS; do
   mkdir -p "$RUN_DIR/$TC/eval_logs" "$RUN_DIR/$TC/eval_results"
-  declare -A RETRY=()
-  queue=("${TASK_LIST[@]}")
-  while :; do
-    for ((g = 0; g < NUM_GPUS; g++)); do
-      if ! kill -0 "${SERVER_PID[$g]}" 2>/dev/null; then
-        echo "inference server on GPU $g exited, see $RUN_DIR/inference_logs/gpu$g.log" >&2; exit 1
-      fi
-    done
-    for ((s = 0; s < NUM_SLOTS; s++)); do
-      if [[ ${SLOT_PID[$s]} != 0 ]] && ! kill -0 "${SLOT_PID[$s]}" 2>/dev/null; then
+  for t in "${TASK_LIST[@]}"; do queue+=("$TC/$t"); done
+done
+while :; do
+  for ((g = 0; g < NUM_GPUS; g++)); do
+    if ! kill -0 "${SERVER_PID[$g]}" 2>/dev/null; then
+      echo "inference server on GPU $g exited, see $RUN_DIR/inference_logs/gpu$g.log" >&2; exit 1
+    fi
+  done
+  for ((s = 0; s < NUM_SLOTS; s++)); do
+    if [[ ${SLOT_PID[$s]} != 0 ]]; then
+      j=${SLOT_JOB[$s]}; TC=${j%%/*}; t=${j#*/}
+      if kill -0 "${SLOT_PID[$s]}" 2>/dev/null; then
+        last=$(stat -c %Y "$RUN_DIR/$TC/eval_logs/$t.log" 2>/dev/null || echo 0)
+        (( last < SLOT_T0[$s] )) && last=${SLOT_T0[$s]}
+        if (( $(date +%s) - last > STALL_SEC )); then
+          echo "[$TC] $t no output for ${STALL_SEC}s, killed"; kill -- -"${SLOT_PID[$s]}" 2>/dev/null
+          SLOT_T0[$s]=$(date +%s)
+        fi
+      else
         wait "${SLOT_PID[$s]}"; rc=$?
-        t=${SLOT_TASK[$s]}
         if [[ $rc != 0 || ! -f "$RUN_DIR/$TC/eval_results/$t/result.json" ]]; then
-          RETRY[$t]=$(( ${RETRY[$t]:-0} + 1 ))
-          if (( RETRY[$t] < MAX_RETRIES )); then
-            echo "[$TC] $t failed (rc=$rc), retry ${RETRY[$t]}"; queue=("$t" "${queue[@]}")
+          RETRY[$j]=$(( ${RETRY[$j]:-0} + 1 ))
+          if (( RETRY[$j] < MAX_RETRIES )); then
+            echo "[$TC] $t failed (rc=$rc), retry ${RETRY[$j]}"; queue=("$j" "${queue[@]}")
           else
             echo "[$TC] $t failed $MAX_RETRIES times, skipped"
           fi
@@ -117,15 +135,20 @@ for TC in $TASK_CONFIGS; do
         fi
         SLOT_PID[$s]=0
       fi
-      if [[ ${SLOT_PID[$s]} == 0 && ${#queue[@]} -gt 0 ]]; then
-        launch "$s" "$TC" "${queue[0]}"; queue=("${queue[@]:1}")
+    fi
+    if [[ ${SLOT_PID[$s]} == 0 && ${#queue[@]} -gt 0 ]]; then
+      j=${queue[0]}
+      if [[ ${j%%/*} == *randomized* ]]; then
+        n=0; for ((k = s % NUM_GPUS; k < NUM_SLOTS; k += NUM_GPUS)); do [[ ${SLOT_PID[$k]} != 0 ]] && n=$((n + 1)); done
+        (( n >= RAND_CLIENTS_PER_GPU )) && continue
       fi
-    done
-    busy=0; for ((s = 0; s < NUM_SLOTS; s++)); do [[ ${SLOT_PID[$s]} != 0 ]] && busy=1; done
-    [[ $busy == 0 && ${#queue[@]} == 0 ]] && break
-    sleep 5
+      queue=("${queue[@]:1}")
+      launch "$s" "${j%%/*}" "${j#*/}"
+    fi
   done
-  unset RETRY
+  busy=0; for ((s = 0; s < NUM_SLOTS; s++)); do [[ ${SLOT_PID[$s]} != 0 ]] && busy=1; done
+  [[ $busy == 0 && ${#queue[@]} == 0 ]] && break
+  sleep 5
 done
 
 # ---- summary: stats.txt per setting + results.json in the competition template format ----
