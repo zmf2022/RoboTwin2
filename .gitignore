@@ -30,3 +30,6 @@ envs/curobo/*
 
 /*.json*
 /*.txt
+
+# competition submission package (weights, zip)
+/submission/

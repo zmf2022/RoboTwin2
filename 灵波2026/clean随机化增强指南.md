@@ -50,6 +50,8 @@ python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 
 ## 3. 第二阶段训练
 
+> **已验证无效（10/02）**：按本节从 30k 训的第二阶段 clean 升、randomized 降（A100 10k 前 308 局 26.0，同样种子本机 30k 36.9；5k 和 10k 都在 adjust_bottle、move_pillbottle_pad、blocks_ranking_rgb 上崩）。不要再按本节训练，保留作记录；原因分析见 `赛题要求与冲榜方案.md`「全量结果」。
+
 从第一阶段最优的 `hf_ckpt` 初始化（选 (clean+random)/2 最高的；可以先按 §3.1 做权重插值再初始化；LoRA 的 `hf_ckpt` 已合并，也可以用），优化器和学习率从头开始。A100 全参第一阶段子集 clean / randomized：20k 79.0/37.0、30k 81.5/36.5、40k 77.5/32.0，起点用 30k（40k 训练 loss 仍在降、评测变差，见 `赛题要求与冲榜方案.md` §七）。
 
 A100 全参（配方同 `run_train_4gpu.sh`）：
