@@ -407,15 +407,10 @@ class FeatureTransform:
             return item
 
         batch_dict = self.pad_and_concat(item, w_action)
-        teacher_obs = None
         if self.random_aug_config and w_action:
             if self.random_aug is None:
                 from .random_aug import RandomSceneAugmentor
                 self.random_aug = RandomSceneAugmentor(self.random_aug_config)
-            if self.use_depth_align and self.random_aug.cfg["teacher_clean"]:
-                # random_aug replaces the dict entries (never writes into the tensors): shallow copies keep the clean frames
-                teacher_obs = {**batch_dict, "image": dict(batch_dict["image"]),
-                               "future_image": dict(batch_dict.get("future_image") or {})}
             self.random_aug(batch_dict, episode_index=item.get('episode_index'), frame_index=item.get('frame_index'),
                             future_offset=self.chunk_size - 1 if self.use_future_image else None)
 
@@ -450,13 +445,6 @@ class FeatureTransform:
                 )
             else:
                 future_images, future_pil_images = None, None
-            if teacher_obs is not None:
-                # depth / video teacher inputs from the clean frames (no random_aug, no image_augment)
-                pil_images = prepare_images(None, teacher_obs, image_keys=self.feature_config.images,
-                                            use_depth_align=True)[2]
-                if future_pil_images is not None and len(teacher_obs["future_image"]) > 0:
-                    future_pil_images = prepare_images(None, {**teacher_obs, "image": teacher_obs["future_image"]},
-                                                       image_keys=self.feature_config.images, use_depth_align=True)[2]
         else:
             images, img_masks, pil_images, image_grid_thw = [], [], [], None
             future_images, future_pil_images = None, None

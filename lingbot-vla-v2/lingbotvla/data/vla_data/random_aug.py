@@ -7,15 +7,16 @@ simulates the demo_randomized setting:
 - background: textures on the table and the wall, keeping the original shading (shadows); the
   robot arms are protected by per-frame masks rendered from the recorded joint states;
 - distractor: object cut-outs from clean frames of *other* tasks pasted onto free table area
-  (head camera), occluded by the arm / task objects;
+  (head camera, optionally enlarged on the wrist cameras), occluded by the arm / task objects;
 - lighting: global gain, colour temperature, gamma, spatial illumination, rare extreme light;
 - geometry: small scale / shift of the head camera (table height +-3cm);
 - instruction: LLM paraphrases of the training instruction.
 
 All parameters are sampled once per sample and shared by the current and future frame, so the
-future-frame depth / video targets stay consistent with the augmented current frame. With
-``teacher_clean`` the depth / video teachers see the frames before randomization instead, so the
-student learns clean-scene targets from randomized inputs.
+future-frame depth / video targets stay consistent with the augmented current frame. (Giving the
+depth / video teachers the clean frames instead made the student erase the pasted distractors from
+its features, i.e. learn "pasted or not"; real clutter is not pasted and was then taken for the task
+objects: stage 2 grasped the clutter in randomized scenes.)
 """
 
 import copy
@@ -38,10 +39,6 @@ logger = logging.get_logger(__name__)
 DEFAULTS = {
     # probability that a sample gets the image randomization at all (the rest stays clean)
     "prob": 0.5,
-    # depth / video distillation teachers get the frames before random_aug and image_augment
-    # (FeatureTransform keeps a copy); False = teachers see what the student sees. The targets are
-    # patch-wise, so keep geometry.prob at 0 with it
-    "teacher_clean": False,
     # substrings of the image keys identifying the fixed head camera / the wrist cameras
     "head_keys": ["camera_top", "cam_high"],
     "wrist_keys": ["wrist"],
@@ -73,6 +70,12 @@ DEFAULTS = {
         "halo_px": 4,
         "halo_sat": 0.3,
         "halo_lum": 0.45,  # head: luminance ratio to the reference; wrist: absolute luminance
+        # white table pixels left on object / arm outlines (edge pixels, dilation) show up as a white
+        # halo on dark textures, which real randomized frames never have: near-white, unsaturated pixels
+        # within rim_px of the background go to it as well. 0 = off
+        "rim_px": 0,
+        "rim_sat": 0.12,
+        "rim_lum": 0.8,  # head: luminance ratio to the reference; wrist: absolute luminance
     },
     "background": {
         "prob": 0.9,  # per randomized sample, for the head camera
@@ -81,6 +84,12 @@ DEFAULTS = {
         "texture_dir_prob": 0.7,
         "same_texture_prob": 0.2,  # table and wall share one texture
         "perspective": [1.2, 2.2],  # head table texture: far/near width ratio
+        # [lo, hi]: rescale each texture to a mean luminance drawn from this range (randomized eval
+        # scenes are dark: head frames average 0.33 vs 0.92 clean); None = texture as loaded
+        "brightness": None,
+        # [lo, hi]: Gaussian blur sigma (px at the working resolution) on each texture; rendered
+        # textures are smoother than DTD photos (Laplacian variance 278 vs 607 on head frames). None = off
+        "blur": None,
     },
     "distractor": {
         "prob": 0.7,
@@ -90,6 +99,15 @@ DEFAULTS = {
         "scale": [0.8, 1.25],
         "horizon": -0.8,  # vanishing row of the table plane, as a fraction of the image height
         "shadow": 0.8,  # contact shadow darkening (1 = none)
+        "top_margin": 0.1,  # head: object centres at least this far (fraction of h) below the table's far edge
+        # wrist cameras (per camera, given the sample got distractors); cut-outs are head-camera sized,
+        # so they are enlarged by wrist_scale. 0 = head camera only
+        "wrist_prob": 0.0,
+        "wrist_num": [1, 3],
+        "wrist_scale": [1.5, 3.5],
+        # pick cut-outs uniformly over their source tasks instead of over cut-outs (the block tasks
+        # alone give a quarter of the library; the eval clutter is household objects)
+        "task_balance": False,
     },
     "lighting": {
         "prob": 0.8,
@@ -247,6 +265,12 @@ def compute_background(img, mcfg, ref=None, protect=None):
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * halo_px + 1, 2 * halo_px + 1))
         near = cv2.dilate((~fg).astype(np.uint8), kernel).astype(bool)
         fg &= ~(near & (bg | soft) & ~edge)
+    rim_px = int(round(mcfg["rim_px"] * scale))
+    if rim_px > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * rim_px + 1, 2 * rim_px + 1))
+        near = cv2.dilate((~fg).astype(np.uint8), kernel).astype(bool)
+        white = (sat < mcfg["rim_sat"]) & ((lum / (ref["lum"] + 1e-6) if ref is not None else lum) > mcfg["rim_lum"])
+        fg &= ~(near & white)
     if protect is not None:
         fg |= protect
     bg = ~fg
@@ -363,6 +387,12 @@ class TextureSource:
             tex = tex[:, ::-1]
         if rng.random() < 0.3:
             tex = tex[..., rng.permutation(3)]
+        if self.bcfg.get("brightness"):
+            tex = np.clip(tex * (rng.uniform(*self.bcfg["brightness"]) / max(float(tex.mean()), 1e-3)), 0, 1)
+        if self.bcfg.get("blur"):
+            sigma = rng.uniform(*self.bcfg["blur"])
+            if sigma > 0.3:
+                tex = cv2.GaussianBlur(tex, (0, 0), sigma)
         return np.ascontiguousarray(tex, dtype=np.float32)
 
     def sample_table(self, rng, h, w, perspective):
@@ -393,6 +423,14 @@ class DistractorLibrary:
         self.native_hw = tuple(int(x) for x in data["native_hw"])
         # conflict[i, j]: task j's objects could be what task i's instruction refers to
         self.conflict = data["conflict"] if "conflict" in data.files else None
+        _, inverse, counts = np.unique(self.task, return_inverse=True, return_counts=True)
+        self.task_balanced_cdf = np.cumsum(1.0 / counts[inverse])
+        self.task_balanced_cdf /= self.task_balanced_cdf[-1]
+
+    def sample(self, rng, task_balance=False):
+        if not task_balance:
+            return int(rng.integers(len(self.shapes)))
+        return min(int(np.searchsorted(self.task_balanced_cdf, rng.random(), side="right")), len(self.shapes) - 1)
 
     def allowed(self, i, own_task):
         if own_task is None:
@@ -518,11 +556,8 @@ class RandomSceneAugmentor:
                 self.paraphrases = {k.strip(): v for k, v in json.load(f).items() if v}
         if self.head_ref is None and (cfg["background"]["prob"] > 0 or cfg["distractor"]["prob"] > 0):
             logger.warning("random_aug: mask.head_ref not set, head camera uses the colour-based mask")
-        if cfg["teacher_clean"] and cfg["geometry"]["prob"] > 0:
-            logger.warning("random_aug: teacher_clean with geometry.prob > 0 misaligns the patch-wise depth / DINO "
-                           "targets (clean frame) with the scaled / shifted student frame")
         logger.info(
-            f"random_aug: prob={cfg['prob']} teacher_clean={cfg['teacher_clean']} arm_masks={self.arm_masks is not None} "
+            f"random_aug: prob={cfg['prob']} arm_masks={self.arm_masks is not None} "
             f"textures={len(self.textures.files)} files + procedural, "
             f"distractors={len(self.distractors) if self.distractors else 0}, paraphrased instructions={len(self.paraphrases)}"
         )
@@ -618,7 +653,8 @@ class RandomSceneAugmentor:
         h, w = arrs[0].shape[:2]
         cfg = self.cfg
         use_bg = scene["background"] and (role == "head" or rng.random() < cfg["background"]["wrist_prob"])
-        use_distractor = scene["distractor"] and role == "head"
+        wrist_p = cfg["distractor"]["wrist_prob"]
+        use_distractor = scene["distractor"] and (role == "head" or (wrist_p > 0 and rng.random() < wrist_p))
         if use_bg or use_distractor:
             ref = self.head_ref.at(h, w) if (role == "head" and self.head_ref is not None) else None
             cam, episode, frame_ids = arm
@@ -635,8 +671,8 @@ class RandomSceneAugmentor:
                 alpha = m["alpha"][..., None]
                 arrs[i] = a * (1 - alpha) + tex * alpha
         if use_distractor:
-            ref = self.head_ref.at(h, w) if self.head_ref is not None else None
-            plans = self._plan_distractors(rng, masks[0], h, w, episode_index, ref)
+            ref = self.head_ref.at(h, w) if (role == "head" and self.head_ref is not None) else None
+            plans = self._plan_distractors(rng, masks[0], h, w, episode_index, ref, wrist=role == "wrist")
             for i, m in enumerate(masks):
                 arrs[i] = self._paste(arrs[i], plans, m["bg"])
         if role == "head" and scene["geometry"]:
@@ -660,7 +696,7 @@ class RandomSceneAugmentor:
         wall = table if same else self.textures.sample(rng, h, w)
         return table, wall
 
-    def _plan_distractors(self, rng, mask, h, w, episode_index, ref):
+    def _plan_distractors(self, rng, mask, h, w, episode_index, ref, wrist=False):
         """Pick cut-outs from other tasks and free table positions (in the current frame)."""
         dcfg = self.cfg["distractor"]
         lib = self.distractors
@@ -670,24 +706,34 @@ class RandomSceneAugmentor:
         clear = max(1, int(round(dcfg["clearance_px"] * sy)))
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * clear + 1, 2 * clear + 1))
         blocked = cv2.dilate((~mask["bg"]).astype(np.uint8), kernel).astype(bool)
-        table_top = ref["table_top"] if ref is not None else int(0.15 * h)
+        if wrist:  # no table plane model: standing on the table (below the wall band), enlarged (the camera is close)
+            wall_rows = np.flatnonzero(mask["wall"][: h // 2].mean(1) > 0.5)
+            table_start = wall_rows.max() + 1 if len(wall_rows) else 0
+            num, y_lo, max_frac, top = dcfg["wrist_num"], table_start + 0.03 * h, 0.6, 0
+        else:
+            table_top = ref["table_top"] if ref is not None else int(0.15 * h)
+            num, y_lo, max_frac, top = dcfg["num"], table_top + dcfg["top_margin"] * h, 0.5, table_top
         plans = []
-        for _ in range(int(rng.integers(dcfg["num"][0], dcfg["num"][1] + 1))):
+        for _ in range(int(rng.integers(num[0], num[1] + 1))):
             for _ in range(20):
-                idx = int(rng.integers(len(lib)))
+                idx = lib.sample(rng, dcfg["task_balance"])
                 if not lib.allowed(idx, own_task):
                     continue
                 rgba = lib.get(idx)
-                cy = rng.uniform(table_top + 0.1 * h, 0.9 * h)
-                src_y = lib.center_y[idx] * sy
-                factor = np.clip((cy - horizon) / max(src_y - horizon, 1.0), 0.6, 1.6) * rng.uniform(*dcfg["scale"])
+                if wrist:  # cy: the bottom (contact) row of the cut-out
+                    cy = rng.uniform(y_lo, h)
+                    factor = rng.uniform(*dcfg["wrist_scale"])
+                else:
+                    cy = rng.uniform(y_lo, 0.9 * h)
+                    src_y = lib.center_y[idx] * sy
+                    factor = np.clip((cy - horizon) / max(src_y - horizon, 1.0), 0.6, 1.6) * rng.uniform(*dcfg["scale"])
                 ch = max(4, int(round(rgba.shape[0] * sy * factor)))
                 cw = max(4, int(round(rgba.shape[1] * sx * factor)))
-                if ch >= h // 2 or cw >= w // 2:
+                if ch >= h * max_frac or cw >= w * max_frac:
                     continue
-                y0 = int(round(cy - ch / 2))
+                y0 = int(round(cy - ch)) if wrist else int(round(cy - ch / 2))
                 x0 = int(rng.integers(0, w - cw))
-                if y0 < table_top or y0 + ch > h:
+                if y0 < top or y0 + ch > h:
                     continue
                 crop = cv2.resize(rgba, (cw, ch), interpolation=cv2.INTER_AREA)
                 region = blocked[y0:y0 + ch, x0:x0 + cw]

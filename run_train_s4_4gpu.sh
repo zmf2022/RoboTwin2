@@ -1,0 +1,34 @@
+#!/bin/bash
+# 第二阶段 v2（s4）：从 soup 20-30k 起训，random_aug_s4.yaml，优化器和学习率从头开始。
+# 第一版第二阶段（random_aug_s2.yaml）randomized 退化的根因：teacher_clean 让深度/视频教师看干净画面，学生必须从表征里
+# 抹掉贴图干扰物，只能学"是否贴图"；训练中没被抹掉的物体全是任务物体，真实杂物不是贴图 -> 被当成目标去抓。
+# s4：关 teacher_clean；干扰物贴到桌面后部和腕部、按来源任务均匀抽；去掉物体/机械臂周围残留的白边；纹理压暗、模糊。
+# 冒烟（必须先跑，几分钟）: STEPS=20 SAVE=20 OUT=output_s4_smoke/ bash run_train_s4_4gpu.sh
+#   日志里应有 random_aug: prob=0.5 teacher_clean=False ... distractors=3060，loss 正常下降，checkpoint 存盘成功
+# 正式: setsid nohup bash run_train_s4_4gpu.sh > lingbot-vla-v2/train_s4_$(date +%m%d_%H%M).log 2>&1 < /dev/null &
+# 中断后用同一命令重跑即从 $OUT 断点续训
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate robotwin
+export LD_PRELOAD=/root/miniconda3/envs/robotwin/lib/libstdc++.so.6
+cd /data/zhangmingfa/RoboTwin2/lingbot-vla-v2
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+NGPU=4
+MBS=${MBS:-8}                  # OOM 改 4
+INIT=${INIT:-$PWD/output_full/checkpoints/soup_20-30k/hf_ckpt}   # 第一阶段 20k+30k 等权平均
+STEPS=${STEPS:-5000}           # 约 9.3 s/步，5000 步约 13 小时
+SAVE=${SAVE:-1000}
+OUT=${OUT:-output_s4/}
+bash ../scripts/train.sh ../scripts/robotwin_local.yaml \
+  --model.model_path $INIT \
+  --data.train_path $PWD/../data/training_data/RoboTwin_lerobot_v30 \
+  --data.random_aug_config ../scripts/random_aug/random_aug_s4.yaml \
+  --data.image_augment true \
+  --train.output_dir $OUT \
+  --train.lr 5.0e-5 --train.lr_min 1.0e-5 --train.lr_warmup_ratio 0.02 \
+  --train.max_steps $STEPS --train.save_steps $SAVE --train.save_total_limit 5 \
+  --train.micro_batch_size $MBS \
+  --train.gradient_accumulation_steps $((256 / (MBS * NGPU))) \
+  --train.global_batch_size 256 \
+  --train.enable_gradient_checkpointing false \
+  --data.num_workers 8 --data.prefetch_factor 2

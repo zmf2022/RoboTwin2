@@ -736,6 +736,11 @@ def main():
         args.train.enable_activation_offload, args.train.enable_gradient_checkpointing, args.train.activation_gpu_limit
     )
     model.train()
+    # set_seed above gave every rank the same seed, so the flow-matching noise / time and the dataloader
+    # workers' image_augment draws repeat across ranks (upstream issue #41). The weights are built and
+    # loaded by now: give each rank its own stream for the training loop.
+    if args.train.world_size > 1:
+        helper.set_seed(args.train.seed + args.train.global_rank, args.train.enable_full_determinism)
     logger.info(
         f"rank{args.train.local_rank} Start training, train_steps: {args.train.train_steps}, epochs: {args.train.num_train_epochs}"
     )
