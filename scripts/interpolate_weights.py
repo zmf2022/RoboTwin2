@@ -4,7 +4,7 @@
   # soup: equal weights
   python scripts/interpolate_weights.py $E/checkpoints/global_step_{20000,30000}/hf_ckpt --out $E/checkpoints/soup_20-30k/hf_ckpt
   # weighted: 0.7 * stage 2 + 0.3 * stage-1 soup
-  python scripts/interpolate_weights.py lingbot-vla-v2/output_s4/checkpoints/global_step_5000/hf_ckpt:0.7 $E/checkpoints/soup_20-30k/hf_ckpt:0.3 --out ...
+  python scripts/interpolate_weights.py lingbot-vla-v2/output_stage2_v2/checkpoints/global_step_5000/hf_ckpt:0.7 $E/checkpoints/soup_20-30k/hf_ckpt:0.3 --out ...
 
 Inputs are hf_ckpt or flat model dirs; weights must sum to 1 (none given: equal). Every tensor must exist in
 every input with the same shape. Sums in fp32, saves in the first input's dtype and sharding; top-level

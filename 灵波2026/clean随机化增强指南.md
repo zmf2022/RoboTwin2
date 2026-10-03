@@ -14,7 +14,7 @@
 | 配置 | 用途 |
 |---|---|
 | `random_aug.yaml` | 从基座起训（如 LoRA 第一阶段） |
-| `random_aug_s4.yaml` | 第二阶段，从全参 checkpoint 起训（§3.2） |
+| `random_aug_stage2.yaml` | 第二阶段，从全参 checkpoint 起训（§3.2） |
 
 ## 1. 生成素材（一次性，仓库根目录）
 
@@ -50,23 +50,24 @@ python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 
 ## 3. 第二阶段训练
 
-从第一阶段 soup 20k+30k 起训（子集 clean / randomized 81.5 / 42.0，好于单个 checkpoint），`random_aug_s4.yaml`，5000 步，优化器和学习率从头开始（5e-5 → 1e-5）。A100 命令见 `A100多卡训练指南.md`「第二阶段」（`run_train_s4_4gpu.sh`）。
+从第一阶段 soup 20k+30k 起训（子集 clean / randomized 81.5 / 42.0，好于单个 checkpoint），`random_aug_stage2.yaml`，5000 步，优化器和学习率从头开始（5e-5 → 1e-5）。A100 命令见 `A100多卡训练指南.md`「第二阶段」（`run_train_stage2_4gpu.sh`）。
 
 - `prob: 0.5`：一半样本保持 clean 原样，相当于 clean 与随机化 1:1 混训，用来保住 clean 分。
 - 启动检查：日志有 `random_aug: prob=0.5 arm_masks=True textures=5640 files + procedural, distractors=3060, paraphrased instructions=2364`；前几步 `VLA_Loss` 约 0.01–0.03，接近 0.36 说明没加载上 checkpoint。开头的 `Error detected in IndexPutBackward0` 是 torch.compile 的警告，不影响训练。
 - dataloader 开销约 40 ms/样本；机械臂 mask 用 mmap 读，worker 多不占内存。
 - 推理和评测都不需要改动。
 
-### 3.2 第二阶段配置（`random_aug_s4.yaml`）
+### 3.2 第二阶段配置（`random_aug_stage2.yaml`）
 
-第一版（`random_aug_s2.yaml`，已删）从 30k 训 5k/10k：clean 升 5.9，randomized 降（A100 10k 27.2）。根因定位（8 个崩溃任务 × 20 局，clean 只加一项，s2 5k / 30k 配对）：只加杂物 s2 不掉，只加纹理小降，两者一起大面积崩（adjust_bottle 6、blocks_ranking_rgb 2、place_object_basket 2 /20）；视频里第一个动作块就伸手去抓后部的真实杂物。评测时只给任务物体画一圈 2 px 白边，s2 纹理 + 杂物从 51 升到 131/160（不加白边 30k 108、soup 121），改给杂物画则降到 24/160：s2 靠换纹理后残留的白边认任务物体（贴图干扰物没有白边）。
+第一版（`random_aug_s2.yaml`，已删）从 30k 训 5k/10k：clean 升 5.9，randomized 降（A100 10k 27.2）。根因定位（8 个崩溃任务 × 20 局，clean 只加一项，第一版 5k / 30k 配对）：只加杂物第一版不掉，只加纹理小降，两者一起大面积崩（adjust_bottle 6、blocks_ranking_rgb 2、place_object_basket 2 /20）；视频里第一个动作块就伸手去抓后部的真实杂物。评测时只给任务物体画一圈 2 px 白边，第一版纹理 + 杂物从 51 升到 131/160（不加白边 30k 108、soup 121），改给杂物画则降到 24/160：第一版靠换纹理后残留的白边认任务物体（贴图干扰物没有白边）。
 
 | 改动 | 原因 |
 |---|---|
 | 去掉 teacher_clean（深度/视频教师看干净画面） | 学生必须从表征里抹掉贴图干扰物，只能学"是否贴图"；训练里没被抹掉的物体全是任务物体，真实杂物不是贴图，就被当成目标。没有 teacher_clean 的 `random_aug.yaml`（LoRA）在同样的任务上不崩 |
-| `distractor`：`prob 0.95`、`num [3, 8]`、`top_margin 0.02`、`wrist_prob 0.6`、`task_balance` | 真实杂物 98% 局都有、每画面多个、靠墙的桌面后部也有、腕部初始视角正对后部杂物；s2 只在约 35% 样本贴 1–4 个、只贴头部、不贴后部；库里积木占 1/4，按来源任务均匀抽 |
+| `distractor`：`prob 0.95`、`num [3, 8]`、`top_margin 0.02`、`wrist_prob 0.6`、`task_balance` | 真实杂物 98% 局都有、每画面多个、靠墙的桌面后部也有、腕部初始视角正对后部杂物；第一版只在约 35% 样本贴 1–4 个、只贴头部、不贴后部；库里积木占 1/4，按来源任务均匀抽 |
 | `mask.rim_px 2`、`arm_dilate_px 0` | 换纹理后物体和机械臂周围残留一圈白桌面，真实画面没有 |
-| `background.brightness [0.15, 0.55]`、`blur [1, 3]`、`prob 0.98`、`wrist_prob 0.8` | 真实 randomized 头部画面平均亮度 0.33（s2 增强后 0.51）、纹理较平滑；腕部基本都是纹理 |
+| `distractor.edge_blur [0.3, 0.8]` | 贴图轮廓比渲染物体锐（归一化边缘梯度 0.84 vs 任务物体 0.79、真实杂物 0.80），可用来区分贴图与真实物体；模糊后 0.80（Cut, Paste and Learn 同样随机化贴图融合） |
+| `background.brightness [0.15, 0.55]`、`blur [1, 3]`、`prob 0.98`、`wrist_prob 0.8` | 真实 randomized 头部画面平均亮度 0.33（第一版增强后 0.51）、纹理较平滑；腕部基本都是纹理 |
 | `geometry.prob 0` | 画面缩放平移而动作不变，标签不一致，会削弱抓取精度 |
 
 ### 3.1 权重插值 / 平均
@@ -81,13 +82,13 @@ python scripts/compare_results.py eval_result/output_full_*
 ```
 
 - 输出放在 `<实验目录>/checkpoints/<名字>/hf_ckpt`，`eval.sh` 会自动用该实验的配置，评测命令不变。约 1 分钟，输出 24G。
-- 第二阶段结束后可在 soup 和 s4 之间加权插值：`interpolate_weights.py <s4 hf_ckpt>:0.7 <soup hf_ckpt>:0.3 --out ...`。
+- 第二阶段结束后可在 soup 和第二阶段之间加权插值：`interpolate_weights.py <第二阶段 hf_ckpt>:0.7 <soup hf_ckpt>:0.3 --out ...`。
 
 ## 4. 合规
 
 - 只用 clean 训练数据（50 任务 × 50 条）。不读取 randomized 数据、RoboTwin 的 `assets/background_texture`，也不读取 unseen 指令模板。
 - 机械臂 mask 是在仿真里按 clean 关节角只渲染机器人本体，不含物体，也没有开随机化，只作为分割用，不进训练图像。它不等于"重放轨迹渲染随机化场景"，但仍建议在钉钉群里确认。
-- 纹理来自程序生成和公开纹理库 DTD（`https://www.robots.ox.ac.uk/~vgg/data/dtd/`，`random_aug_s4.yaml`），不用 RoboTwin 自带纹理。
+- 纹理来自程序生成和公开纹理库 DTD（`https://www.robots.ox.ac.uk/~vgg/data/dtd/`，`random_aug_stage2.yaml`），不用 RoboTwin 自带纹理。
 
 ## 5. 已知问题
 

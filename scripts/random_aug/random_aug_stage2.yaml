@@ -1,11 +1,11 @@
-# 第二阶段（从 soup 20-30k 起训，run_train_s4_4gpu.sh）。clean -> randomized 训练增强（lingbotvla/data/vla_data/random_aug.py），
+# 第二阶段（从 soup 20-30k 起训，run_train_stage2_4gpu.sh）。clean -> randomized 训练增强（lingbotvla/data/vla_data/random_aug.py），
 # 只用 clean 训练数据；未列出的参数取 DEFAULTS。
-# 第一版（s2）在纹理+杂物同时出现时崩：机械臂伸向后部真实杂物（clean 只加杂物 76.6、只加纹理小降，两者一起 8 个任务大面积崩）。
-# 相对 s2 的改动：去掉 teacher_clean；增强样本 95% 贴干扰物、每画面 3-8 个、桌面后部和腕部也贴、按来源任务均匀抽；去掉白边；纹理压暗、模糊。
+# 第一版（random_aug_s2.yaml，已删）在纹理+杂物同时出现时崩：机械臂伸向后部真实杂物（clean 只加杂物 76.6、只加纹理小降，两者一起 8 个任务大面积崩）。
+# 相对第一版的改动：去掉 teacher_clean；增强样本 95% 贴干扰物、每画面 3-8 个、桌面后部和腕部也贴、按来源任务均匀抽、轮廓模糊；去掉白边；纹理压暗、模糊。
 
 prob: 0.5                 # 一半样本保持 clean，保 clean 成功率
-# 深度/视频教师看学生同一张增强后画面。s2 让教师看干净画面（teacher_clean，已删除）：学生须从表征里抹掉贴图干扰物，只能靠
-# "是否贴图"区分，训练里没被抹掉的物体全是任务物体；真实杂物不是贴图 -> 被当成目标（s2 在纹理+杂物下伸手抓后部杂物）。
+# 深度/视频教师看学生同一张增强后画面。第一版让教师看干净画面（teacher_clean，已删除）：学生须从表征里抹掉贴图干扰物，只能靠
+# "是否贴图"区分，训练里没被抹掉的物体全是任务物体；真实杂物不是贴图 -> 被当成目标（第一版在纹理+杂物下伸手抓后部杂物）。
 
 mask:
   head_ref: ../../lingbot-vla-v2/assets/random_aug/cam_high_ref.png
@@ -26,9 +26,10 @@ distractor:
   library: ../../data/random_aug/distractors.npz
   num: [3, 8]
   top_margin: 0.02        # 桌面后部（靠墙）也放
-  wrist_prob: 0.6         # 腕部相机也贴（放大 1.5-3.5 倍，立在墙下的桌面上）：s2 只贴头部，腕部初始视角正对后部杂物
+  wrist_prob: 0.6         # 腕部相机也贴（放大 1.5-3.5 倍，立在墙下的桌面上）：第一版只贴头部，腕部初始视角正对后部杂物
   wrist_num: [1, 3]
   task_balance: true      # 按来源任务均匀抽（4 个积木任务占库的 1/4，真实杂物是日用品）
+  edge_blur: [0.3, 0.8]   # 头部贴图轮廓比渲染物体锐（边缘梯度 0.86 vs 真实杂物 0.80、增强后任务物体 0.77），模糊后 0.80，不再能区分贴图与真实物体
 
 lighting:
   prob: 0.8

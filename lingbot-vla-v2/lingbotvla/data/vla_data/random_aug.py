@@ -108,6 +108,10 @@ DEFAULTS = {
         # pick cut-outs uniformly over their source tasks instead of over cut-outs (the block tasks
         # alone give a quarter of the library; the eval clutter is household objects)
         "task_balance": False,
+        # [lo, hi]: Gaussian sigma (px at the working resolution) on each head cut-out's alpha. Cut-outs have
+        # sharper outlines than the rendered objects (step-normalised edge gradient 0.86 vs 0.79 on head frames),
+        # a cue that tells pasted from real objects (Cut, Paste and Learn randomises the blending). None = off
+        "edge_blur": None,
     },
     "lighting": {
         "prob": 0.8,
@@ -736,6 +740,10 @@ class RandomSceneAugmentor:
                 if y0 < top or y0 + ch > h:
                     continue
                 crop = cv2.resize(rgba, (cw, ch), interpolation=cv2.INTER_AREA)
+                if dcfg["edge_blur"] and not wrist:
+                    sigma = rng.uniform(*dcfg["edge_blur"])
+                    if sigma > 0.1:
+                        crop[..., 3] = cv2.GaussianBlur(np.ascontiguousarray(crop[..., 3]), (0, 0), sigma)
                 region = blocked[y0:y0 + ch, x0:x0 + cw]
                 if (region & (crop[..., 3] > 0.1)).any():
                     continue
