@@ -59,7 +59,7 @@ python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 
 ### 3.2 第二阶段配置（`random_aug_s4.yaml`）
 
-第一版（`random_aug_s2.yaml`，已删）从 30k 训 5k/10k：clean 升 5.9，randomized 降（A100 10k 27.2）。根因定位（8 个崩溃任务 × 20 局，clean 只加一项，s2 5k / 30k 配对）：只加杂物 s2 不掉，只加纹理小降，两者一起大面积崩（adjust_bottle 6、blocks_ranking_rgb 2、place_object_basket 2 /20）；视频里第一个动作块就伸手去抓后部的真实杂物。
+第一版（`random_aug_s2.yaml`，已删）从 30k 训 5k/10k：clean 升 5.9，randomized 降（A100 10k 27.2）。根因定位（8 个崩溃任务 × 20 局，clean 只加一项，s2 5k / 30k 配对）：只加杂物 s2 不掉，只加纹理小降，两者一起大面积崩（adjust_bottle 6、blocks_ranking_rgb 2、place_object_basket 2 /20）；视频里第一个动作块就伸手去抓后部的真实杂物。评测时只给任务物体画一圈 2 px 白边，s2 纹理 + 杂物从 51 升到 131/160（30k 不加白边 108），改给杂物画则降到 24/160：s2 靠换纹理后残留的白边认任务物体（贴图干扰物没有白边）。
 
 | 改动 | 原因 |
 |---|---|
