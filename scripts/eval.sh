@@ -7,8 +7,7 @@
 #   randomized renders use more GPU memory: RAND_CLIENTS_PER_GPU (default clients_per_gpu) caps the clients running
 #   on a GPU when a randomized job is started there
 #   model_dir: .../checkpoints/global_step_N/hf_ckpt (fine-tuned) or a flat model dir (e.g. the base model)
-# Env overrides: CLI_YAML, OUTPUT_BASE, QWEN3VL_PATH, TASK_CONFIGS, TASKS, TEST_NUM, USE_LENGTH, NUM_STEPS, VIDEO, STALL_SEC, RAND_CLIENTS_PER_GPU, CONDA_ENV
-#   non-default USE_LENGTH / NUM_STEPS (denoising steps, model default 10) are appended to the run name
+# Env overrides: CLI_YAML, OUTPUT_BASE, QWEN3VL_PATH, TASK_CONFIGS, TASKS, TEST_NUM, VIDEO, STALL_SEC, RAND_CLIENTS_PER_GPU, CONDA_ENV
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,8 +17,6 @@ CLIENTS_PER_GPU="${3:-1}"
 RAND_CLIENTS_PER_GPU="${RAND_CLIENTS_PER_GPU:-$CLIENTS_PER_GPU}"
 OUTPUT_BASE="${OUTPUT_BASE:-$ROOT/eval_result}"
 TASK_CONFIGS="${TASK_CONFIGS:-demo_clean demo_randomized}"
-USE_LENGTH="${USE_LENGTH:-50}"
-NUM_STEPS="${NUM_STEPS:-}"
 VIDEO="${VIDEO:-1}"
 TEST_NUM="${TEST_NUM:-100}"
 STALL_SEC="${STALL_SEC:-900}"
@@ -50,9 +47,6 @@ else
   CLI_YAML="$ROOT/scripts/lingbotvla_cli_base.yaml"
   NAME="$(basename "$MODEL_PATH")"
 fi
-[[ $(basename "$MODEL_PATH") == ema_hf_ckpt ]] && NAME+="_ema"
-[[ $USE_LENGTH != 50 ]] && NAME+="_len$USE_LENGTH"
-[[ -n $NUM_STEPS ]] && NAME+="_ns$NUM_STEPS"
 export LINGBOT_CLI_YAML="$(realpath "$CLI_YAML")"
 echo "model: $MODEL_PATH"
 echo "config: $LINGBOT_CLI_YAML"
@@ -83,8 +77,8 @@ trap 'exit 130' INT TERM
 # ---- inference servers (one per GPU, resident for all settings) ----
 for ((g = 0; g < NUM_GPUS; g++)); do
   (CUDA_VISIBLE_DEVICES=$g exec setsid python "$ROOT/scripts/lingbot_policy_server.py" \
-    --model_path "$MODEL_PATH" --use_length "$USE_LENGTH" --use_bf16 False --use_fp32 True --use_compile True \
-    ${NUM_STEPS:+--num_steps "$NUM_STEPS"} --port $((9330 + g))) > "$RUN_DIR/inference_logs/gpu$g.log" 2>&1 &
+    --model_path "$MODEL_PATH" --use_length 50 --use_bf16 False --use_fp32 True --use_compile True \
+    --port $((9330 + g))) > "$RUN_DIR/inference_logs/gpu$g.log" 2>&1 &
   SERVER_PID[$g]=$!
 done
 for ((s = 0; s < NUM_SLOTS; s++)); do SLOT_PID[$s]=0; done

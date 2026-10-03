@@ -196,10 +196,8 @@ class LingbotVLAv2Server:
         use_bf16=True,
         use_fp32=False,
         use_compile=False,
-        num_steps=None,
     ) -> None:
         assert not (use_bf16 and use_fp32), 'Bfloat16 or Float32!!!'
-        self.num_steps = num_steps
         self.adaptive_ensemble_alpha = adaptive_ensemble_alpha
         self.action_ensemble_horizon = action_ensemble_horizon
         self.use_length = use_length
@@ -308,8 +306,7 @@ class LingbotVLAv2Server:
 
         if 'vocab_size' in training_config['model'] and training_config['model']['vocab_size'] != 0:
             config.vocab_size = training_config['model']['vocab_size']
-        if self.num_steps:  # flow-matching denoising steps (config default 10)
-            config.num_steps = self.num_steps
+        # config.num_steps = 4
         config.use_cache = True # is necessary in inference
         # load processors
         self.processor = build_processor(base_model_path)
@@ -593,13 +590,6 @@ def main():
         default=True,
     )
 
-    parser.add_argument(
-        "--num_steps",
-        type=int,
-        default=None,
-        help="denoising steps (default: model config, 10)"
-    )
-
     args = parser.parse_args()
 
     model = LingbotVLAv2Server(
@@ -609,7 +599,6 @@ def main():
         use_bf16=args.use_bf16,
         use_fp32=args.use_fp32,
         use_compile=args.use_compile,
-        num_steps=args.num_steps,
     )
     model_server = WebsocketPolicyServer(model, port=args.port)
     model_server.serve_forever()

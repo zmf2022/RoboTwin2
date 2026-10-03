@@ -242,17 +242,13 @@ class CombinedOptimizer(Optimizer):
             opt.load_state_dict(sd)
 
 
-VLM_SCOPE = "qwenvl_with_expert.qwenvl."
-
-
 def _split_param_groups_by_scaled_lr(
     params_and_names: Sequence[Tuple[torch.Tensor, str]],
     base_lr: float,
     layer_to_scale: Dict[int, float],
     layer_re: "re.Pattern[str]",
-    vlm_lr_scale: float = 1.0,
 ) -> List[Dict[str, Any]]:
-    """Bucket (param, name) pairs by their possibly MoE-scaled LR; VLM weights (not LoRA) get x vlm_lr_scale."""
+    """Bucket (param, name) pairs by their possibly MoE-scaled LR."""
     lr_to_params: Dict[float, List[torch.Tensor]] = {base_lr: []}
     for p, name in params_and_names:
         m = layer_re.search(name)
@@ -262,8 +258,6 @@ def _split_param_groups_by_scaled_lr(
             scale = layer_to_scale.get(layer_idx)
             if scale is not None:
                 lr_for_param = base_lr * scale
-        if VLM_SCOPE in name and "lora_" not in name:
-            lr_for_param *= vlm_lr_scale
         lr_to_params.setdefault(lr_for_param, []).append(p)
     return [{"params": ps, "lr": lr} for lr, ps in lr_to_params.items() if ps]
 
@@ -296,12 +290,11 @@ def build_muon_optimizer(
             for idx in token_moe_layers:
                 layer_to_scale[idx] = token_scale
 
-    vlm_lr_scale = float(getattr(args_train, "vlm_lr_scale", 1.0))
     muon_groups = _split_param_groups_by_scaled_lr(
-        list(zip(muon_params, muon_names)), lr, layer_to_scale, layer_re, vlm_lr_scale
+        list(zip(muon_params, muon_names)), lr, layer_to_scale, layer_re
     )
     adamw_groups = _split_param_groups_by_scaled_lr(
-        list(zip(adamw_params, adamw_names)), lr, layer_to_scale, layer_re, vlm_lr_scale
+        list(zip(adamw_params, adamw_names)), lr, layer_to_scale, layer_re
     )
 
     if not muon_groups:

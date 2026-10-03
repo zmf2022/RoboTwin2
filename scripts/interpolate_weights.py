@@ -1,21 +1,18 @@
-"""Weighted average of LingBot-VLA 2.0 checkpoints: WiSE-FT (fine-tuned <-> base) and model soups.
+"""Weighted average of LingBot-VLA 2.0 checkpoints (model soups; interpolating toward the pretrained base hurts).
 
-  B=/mnt/datadisk/models/lingbot-vla/lingbot-vla-v2-6b
   E=lingbot-vla-v2/output_full
-  # WiSE-FT: 0.7 * fine-tuned + 0.3 * base
-  python scripts/interpolate_weights.py $E/checkpoints/global_step_20000/hf_ckpt:0.7 $B:0.3 --out $E/checkpoints/wise0.7_20000/hf_ckpt
   # soup: equal weights
-  python scripts/interpolate_weights.py $E/checkpoints/global_step_{15000,20000,25000}/hf_ckpt --out $E/checkpoints/soup_15-25k/hf_ckpt
+  python scripts/interpolate_weights.py $E/checkpoints/global_step_{20000,30000}/hf_ckpt --out $E/checkpoints/soup_20-30k/hf_ckpt
+  # weighted: 0.7 * stage 2 + 0.3 * stage-1 soup
+  python scripts/interpolate_weights.py lingbot-vla-v2/output_s4/checkpoints/global_step_5000/hf_ckpt:0.7 $E/checkpoints/soup_20-30k/hf_ckpt:0.3 --out ...
 
 Inputs are hf_ckpt or flat model dirs; weights must sum to 1 (none given: equal). Every tensor must exist in
 every input with the same shape. Sums in fp32, saves in the first input's dtype and sharding; top-level
 non-weight files (config, tokenizer) come from the first input. Put --out under <exp>/checkpoints/<name>/hf_ckpt
 so that eval.sh finds <exp>/lingbotvla_cli.yaml.
---keys REGEX: only matching tensors are averaged, the rest are taken from the first input.
 """
 import argparse
 import json
-import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -53,7 +50,6 @@ def main(a):
     out = Path(a.out).expanduser().resolve()
     if out.exists():
         raise SystemExit(f"{out} exists")
-    keys = re.compile(a.keys) if a.keys else None
 
     maps = [weight_map(d) for d in dirs]
     handles = {}
@@ -86,7 +82,7 @@ def main(a):
         tensors = {}
         for k in names:
             first = tensor_file(0, k).get_tensor(k)
-            if not first.is_floating_point() or (keys and not keys.search(k)):
+            if not first.is_floating_point():
                 tensors[k] = first
                 n_copy += 1
                 continue
@@ -101,7 +97,7 @@ def main(a):
         if f.is_file() and not f.name.endswith(".safetensors"):
             shutil.copy2(f, tmp / f.name)
     (tmp / "interpolation.json").write_text(json.dumps(
-        {"inputs": [str(d) for d in dirs], "weights": weights, "keys": a.keys}, indent=2))
+        {"inputs": [str(d) for d in dirs], "weights": weights}, indent=2))
     tmp.rename(out)
     print(f"averaged {n_avg} tensors, copied {n_copy} from the first input -> {out}")
 
@@ -110,5 +106,4 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("inputs", nargs="+", help="model dir[:weight]")
     p.add_argument("--out", required=True)
-    p.add_argument("--keys", default=None, help="regex: only average matching tensors")
     main(p.parse_args())

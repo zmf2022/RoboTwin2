@@ -72,10 +72,8 @@ python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 ### 3.1 权重插值 / 平均
 
 ```bash
-B=/mnt/datadisk/models/lingbot-vla/lingbot-vla-v2-6b
 E=lingbot-vla-v2/output_full
-# WiSE-FT：0.7×微调 + 0.3×基座，α 扫 0.5～0.9
-python scripts/interpolate_weights.py $E/checkpoints/global_step_<N>/hf_ckpt:0.7 $B:0.3 --out $E/checkpoints/wise0.7_<N>/hf_ckpt
+# 往基座插值（WiSE-FT / 只插语言模型）实测变差，不再使用
 # 多个 checkpoint 等权平均（soup）
 python scripts/interpolate_weights.py $E/checkpoints/global_step_{<N1>,<N2>,<N3>}/hf_ckpt --out $E/checkpoints/soup_<N1>-<N3>/hf_ckpt
 # 对比多次评测：总分排序 + 最优 run 的逐任务掉点
@@ -83,8 +81,7 @@ python scripts/compare_results.py eval_result/output_full_*
 ```
 
 - 输出放在 `<实验目录>/checkpoints/<名字>/hf_ckpt`，`eval.sh` 会自动用该实验的配置，评测命令不变。约 1 分钟，输出 24G。
-- `--keys REGEX` 只插值匹配的参数，其余取第一个输入。例如只插值 VLM、动作专家保持微调值：`--keys 'qwenvl_with_expert\.qwenvl\.'`。
-- 第二阶段结束后同样可在第一、二阶段之间扫 α。
+- 第二阶段结束后可在 soup 和 s4 之间加权插值：`interpolate_weights.py <s4 hf_ckpt>:0.7 <soup hf_ckpt>:0.3 --out ...`。
 
 ## 4. 合规
 
