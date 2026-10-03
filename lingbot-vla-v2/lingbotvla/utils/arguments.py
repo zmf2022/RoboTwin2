@@ -240,6 +240,24 @@ class DataArguments:
             )
         },
     )
+    image_augment_crop: float = field(
+        default=1.0,
+        metadata={
+            "help": (
+                "With image_augment: random crop of this fraction of the side on non-wrist views, resized back "
+                "(openpi uses 0.95). 1.0 = off."
+            )
+        },
+    )
+    image_augment_rotate: float = field(
+        default=0.0,
+        metadata={
+            "help": (
+                "With image_augment: random rotation of non-wrist views by up to +-this many degrees after the "
+                "crop, zero fill (openpi uses 5). 0 = off."
+            )
+        },
+    )
     random_aug_config: Optional[str] = field(
         default=None,
         metadata={

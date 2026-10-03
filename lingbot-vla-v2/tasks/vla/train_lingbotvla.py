@@ -127,6 +127,15 @@ class MyTrainingArguments(TrainingArguments):
         default=1e-6,
         metadata={"help": "Maximum learning rate for vit parameters."},
     )
+    ema_decay: float = field(
+        default=0.0,
+        metadata={"help": "EMA decay of the trainable weights (0 = off). Kept on the CPU, saved to <ckpt>/ema "
+                          "and exported as <ckpt>/ema_hf_ckpt next to hf_ckpt."},
+    )
+    ema_every: int = field(
+        default=1,
+        metadata={"help": "Update the EMA every N optimizer steps (with decay ** N)."},
+    )
     freeze_vision_encoder: bool = field(
         default=False,
         metadata={"help": "Whether or not to freeze the vision encoder in PI0 model."},
@@ -146,6 +155,11 @@ class MyTrainingArguments(TrainingArguments):
     lora_alpha: float = field(
         default=64.0,
         metadata={"help": "LoRA alpha; scale = lora_alpha / lora_rank."},
+    )
+    lora_train_vision: bool = field(
+        default=False,
+        metadata={"help": "With lora_rank > 0: keep the vision tower trainable (only the language model is frozen "
+                          "under its LoRA), a cheaper stand-in for full fine-tuning of the visual features."},
     )
     lora_target_modules: List[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -432,10 +446,14 @@ def main():
         if args.train.train_expert_only:
             raise ValueError("lora_rank > 0 and train_expert_only are mutually exclusive.")
         from lingbotvla.utils.vla_lora import inject_lora
-        n_lora = inject_lora(model, args.train.lora_rank, args.train.lora_alpha, args.train.lora_target_modules)
+        frozen_scope = "qwenvl_with_expert.qwenvl." + ("model.language_model." if args.train.lora_train_vision else "")
+        n_lora = inject_lora(model, args.train.lora_rank, args.train.lora_alpha, args.train.lora_target_modules,
+                             frozen_scope=frozen_scope)
         # LoRA matrices go to AdamW, not Muon
         args.train.muon_exclude_name_patterns = list(args.train.muon_exclude_name_patterns or []) + ["lora_"]
-        logger.info_rank0(f"LoRA r={args.train.lora_rank} alpha={args.train.lora_alpha}: {n_lora / 1e6:.1f}M params")
+        n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info_rank0(f"LoRA r={args.train.lora_rank} alpha={args.train.lora_alpha}: {n_lora / 1e6:.1f}M params, "
+                          f"frozen scope {frozen_scope}, trainable {n_train / 1e9:.2f}B")
     from lingbotvla.utils.moe_utils import log_model_param_stats
     log_model_param_stats(model)
 
@@ -642,7 +660,7 @@ def main():
             save_checkpoint_path=checkpoint_path,
             output_dir=args.train.output_dir,
             ckpt_manager=args.train.ckpt_manager,
-            save_ema=checkpoint_state.get("ema") is not None,
+            save_ema=ema is not None,
             enable_fp32=args.train.enable_fp32,
             model_assets=model_assets,
             epoch=epoch,
@@ -694,6 +712,7 @@ def main():
                 load_checkpoint_path = candidates[0]
             else:
                 logger.info_rank0(f"No checkpoints in {args.train.output_dir} now!")
+    loaded_checkpoint = None
     if candidates:
         last_err = None
         loaded = False
@@ -714,6 +733,7 @@ def main():
                 dist.barrier()
                 logger.info_rank0(f"Load distributed checkpoint from {cp} successfully!")
                 loaded = True
+                loaded_checkpoint = cp
                 break
             except Exception as e:
                 last_err = e
@@ -723,6 +743,13 @@ def main():
             logger.info_rank0("Starting training from scratch. No valid checkpoint could be loaded.")
     else:
         logger.info_rank0("Starting training from scratch.")
+
+    ema = None
+    if args.train.ema_decay > 0:
+        from lingbotvla.utils.param_ema import ParamEMA
+        ema = ParamEMA(model, args.train.ema_decay, args.train.ema_every)
+        if loaded_checkpoint is not None:
+            ema.load(model, loaded_checkpoint)
 
     helper.empty_cache()
     model_fwd_context, model_bwd_context = build_activation_offloading_context(
@@ -938,6 +965,8 @@ def main():
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            if ema is not None:
+                ema.update(global_step)
             if hasattr(grad_norm, "full_tensor"):
                 grad_norm = grad_norm.full_tensor().item()
 
@@ -1157,6 +1186,8 @@ def main():
                 if args.train.global_rank == 0:
                     writer.flush()
                 Checkpointer.save(args.train.save_checkpoint_path, state, global_steps=global_step)
+                if ema is not None:
+                    ema.save(model, save_checkpoint_path)
                 dist.barrier()
                 logger.info_rank0(f"Distributed checkpoint saved at {save_checkpoint_path} successfully!")
                 save_hf_checkpoint_best_effort(
@@ -1197,6 +1228,8 @@ def main():
                     },
                 }
                 Checkpointer.save(args.train.save_checkpoint_path, state, global_steps=global_step)
+                if ema is not None:
+                    ema.save(model, save_checkpoint_path)
                 dist.barrier()
                 logger.info_rank0(f"Distributed checkpoint saved at {save_checkpoint_path} successfully!")
                 save_hf_checkpoint_best_effort(
@@ -1224,6 +1257,8 @@ def main():
                 },
             }
             Checkpointer.save(args.train.save_checkpoint_path, state, global_steps=global_step)
+            if ema is not None:
+                ema.save(model, save_checkpoint_path)
             dist.barrier()
             logger.info_rank0(f"Distributed checkpoint saved at {save_checkpoint_path} successfully!")
             save_hf_checkpoint_best_effort(

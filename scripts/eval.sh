@@ -47,6 +47,7 @@ else
   CLI_YAML="$ROOT/scripts/lingbotvla_cli_base.yaml"
   NAME="$(basename "$MODEL_PATH")"
 fi
+[[ "$(basename "$MODEL_PATH")" == ema_hf_ckpt ]] && NAME="${NAME}_ema"
 export LINGBOT_CLI_YAML="$(realpath "$CLI_YAML")"
 echo "model: $MODEL_PATH"
 echo "config: $LINGBOT_CLI_YAML"
