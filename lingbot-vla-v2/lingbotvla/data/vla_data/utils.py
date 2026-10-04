@@ -110,9 +110,6 @@ class FeatureTransform:
 
         if not disabled_image_features:
             self.image_augment = image_augment
-        # openpi-style geometric augmentation of the non-wrist views (only with image_augment); 1.0 / 0.0 = off
-        self.image_augment_crop = float(getattr(data_config, 'image_augment_crop', 1.0))
-        self.image_augment_rotate = float(getattr(data_config, 'image_augment_rotate', 0.0))
         # built lazily on the first training sample, so inference never touches its assets
         self.random_aug_config = getattr(data_config, 'random_aug_config', None)
         self.random_aug = None
@@ -435,8 +432,6 @@ class FeatureTransform:
                 use_depth_align=self.use_depth_align,
                 return_image_grid_thw=return_image_grid_thw,
                 return_augment_params=True,
-                augment_crop=self.image_augment_crop,
-                augment_rotate=self.image_augment_rotate,
             )
             if self.use_future_image and len(batch_dict.get("future_image", {})) > 0:
                 future_obs = {**batch_dict, "image": batch_dict["future_image"]}

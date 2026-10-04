@@ -225,49 +225,19 @@ def _visual_hw(visual: Tensor) -> tuple[int, int]:
 
 def sample_visual_augmentation_params(
     reference: Tensor,
-    crop: float = 1.0,
-    rotate: float = 0.0,
 ) -> dict:
-    """Sample one replayable augmentation config for all views/frames in a sample.
-
-    crop < 1 / rotate > 0 add openpi's geometric augmentation (random crop of `crop` x the side, resized
-    back, then a rotation of up to +-`rotate` degrees); apply_visual_augmentation uses it on non-wrist views.
-    """
+    """Sample one replayable augmentation config for all views/frames in a sample."""
     _visual_hw(reference)
     device = reference.device
-    params = {
+    return {
         "brightness": 0.7 + torch.rand((), device=device) * 0.6,
         "contrast": 0.6 + torch.rand((), device=device) * 0.8,
         "saturation": 0.5 + torch.rand((), device=device),
     }
-    if crop < 1.0 or rotate > 0.0:
-        params["crop"] = crop
-        params["crop_pos"] = torch.rand(2, device=device)  # (y, x) position of the crop in the free margin
-        params["angle"] = (torch.rand((), device=device) * 2 - 1) * rotate
-    return params
-
-
-def _crop_rotate(image: Tensor, params: dict) -> Tensor:
-    """openpi / augmax order on (B,C,H,W) floats: random crop, resize back to (H,W), rotate (zero fill)."""
-    from torchvision.transforms.functional import InterpolationMode, rotate
-
-    height, width = image.shape[-2:]
-    crop = params["crop"]
-    if crop < 1.0:
-        ch, cw = max(1, round(height * crop)), max(1, round(width * crop))
-        top = int(params["crop_pos"][0].item() * (height - ch))
-        left = int(params["crop_pos"][1].item() * (width - cw))
-        image = F.interpolate(image[..., top : top + ch, left : left + cw], size=(height, width),
-                              mode="bilinear", align_corners=False)
-    angle = float(params["angle"])
-    if angle != 0.0:
-        image = rotate(image, angle, interpolation=InterpolationMode.BILINEAR, fill=0.0)
-    return image
 
 def apply_visual_augmentation(
     visual: Tensor,
     params: dict,
-    geometric: bool = False,
 ) -> Tensor:
     """Apply the same sampled crop/rotate/color params to an image or video clip.
 
@@ -289,8 +259,6 @@ def apply_visual_augmentation(
     image = visual_bchw.to(torch.float32)
     if image.max() > 1.0:
         image = image / 255.0
-    if geometric and "angle" in params:
-        image = _crop_rotate(image, params)
 
     brightness = params["brightness"].to(device=image.device, dtype=image.dtype)
     contrast = params["contrast"].to(device=image.device, dtype=image.dtype)
@@ -317,8 +285,6 @@ def prepare_images(
     return_image_grid_thw=False,
     augment_params=None,
     return_augment_params=False,
-    augment_crop=1.0,
-    augment_rotate=0.0,
 ):
     """Normalize, resize, and pad images and stack them into a tensor.
 
@@ -339,8 +305,7 @@ def prepare_images(
         for key in image_keys:
             if key in observation["image"]:
                 if augment_params is None:
-                    augment_params = sample_visual_augmentation_params(
-                        observation["image"][key], augment_crop, augment_rotate)
+                    augment_params = sample_visual_augmentation_params(observation["image"][key])
                 break
 
     if use_depth_align:
@@ -352,12 +317,11 @@ def prepare_images(
         assert img.ndim == 3, f"Expected 3D image, got {img.shape}"
         if train:
             if augment_params is None:
-                augment_params = sample_visual_augmentation_params(img, augment_crop, augment_rotate)
+                augment_params = sample_visual_augmentation_params(img)
 
             img = apply_visual_augmentation(
                 img,
                 augment_params,
-                geometric="wrist" not in key,
             )
 
         if use_depth_align:
