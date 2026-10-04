@@ -50,7 +50,7 @@ python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 
 ## 3. 第二阶段训练
 
-从第一阶段 soup 20k+30k 起训（子集 clean / randomized 81.5 / 42.0，好于单个 checkpoint），`random_aug_stage2.yaml`，5000 步，优化器和学习率从头开始（5e-5 → 1e-5）。A100 命令见 `A100多卡训练指南.md`「第二阶段」（`run_train_stage2_4gpu.sh`）。
+从第一阶段 soup 20k+30k 起训（子集 clean / randomized 81.5 / 42.0，好于单个 checkpoint），`random_aug_stage2.yaml`，优化器和学习率从头开始（5e-5 → 1e-5）；v2 训 5000 步（randomized 3k > 4k > 5k），v3 加 `mask_padded_actions`、训 2500 步。A100 命令见 `A100多卡训练指南.md`「第二阶段」（`run_train_stage2_4gpu.sh`）。
 
 - `prob: 0.5`：一半样本保持 clean 原样，相当于 clean 与随机化 1:1 混训，用来保住 clean 分。
 - 启动检查：日志有 `random_aug: prob=0.5 arm_masks=True textures=5640 files + procedural, distractors=3060, paraphrased instructions=2364`；前几步 `VLA_Loss` 约 0.01–0.03，接近 0.36 说明没加载上 checkpoint。开头的 `Error detected in IndexPutBackward0` 是 torch.compile 的警告，不影响训练。

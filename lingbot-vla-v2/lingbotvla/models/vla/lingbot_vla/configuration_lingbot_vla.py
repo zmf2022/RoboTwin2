@@ -79,6 +79,8 @@ class LingbotVLAConfig(PretrainedConfig):
         action_num_key_value_heads: int = 2,
         action_head_dim: int = 128,
         action_fp32: bool = False,
+        mask_padded_actions: bool = False,
+        state_history_frames: int = 0,
         use_qwen3_chat_template: bool = False,
         return_image_grid_thw: bool = False,
         qwen3vl_use_vision_boundaries: bool = False,
@@ -161,6 +163,8 @@ class LingbotVLAConfig(PretrainedConfig):
         self.action_num_key_value_heads = action_num_key_value_heads
         self.action_head_dim = action_head_dim
         self.action_fp32 = action_fp32
+        self.mask_padded_actions = mask_padded_actions
+        self.state_history_frames = state_history_frames
         self.use_qwen3_chat_template = use_qwen3_chat_template
         self.return_image_grid_thw = return_image_grid_thw
         self.qwen3vl_use_vision_boundaries = qwen3vl_use_vision_boundaries
