@@ -810,6 +810,12 @@ class FlowMatchingV2(FlowMatchingV1):
         time_embs, suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(
             state, x_t, time
         )
+        state_drop = float(getattr(self.config, "state_emb_dropout_prob", 0.0) or 0.0)
+        if self.training and state_drop > 0:
+            # GR00T N1.7 action head: zero the state features of a random subset of the samples (the state token is
+            # suffix position 0, before the action tokens)
+            keep = (torch.rand(suffix_embs.shape[0], 1, 1, device=suffix_embs.device) >= state_drop).to(suffix_embs.dtype)
+            suffix_embs = torch.cat([suffix_embs[:, :1] * keep, suffix_embs[:, 1:]], dim=1)
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)

@@ -350,6 +350,14 @@ class LingbotVLAv2Server:
         self.last_action_chunk = None
         self.last_normalized_action_chunk = None
 
+        # the robot config the model was trained with (e.g. robotwin_rel: relative arm actions) decides how its
+        # actions are turned back into joint targets; the client's robo_name only names the robot
+        trained_name = getattr(getattr(self, 'data_config', None), 'data_name', None)
+        if trained_name and trained_name != robo_name and os.path.exists(f'configs/robot_configs/{trained_name}.yaml'):
+            if not getattr(self, '_robot_config_noted', False):  # once, not on every episode reset
+                print(f"robot config: {trained_name} (from the training config) instead of {robo_name}")
+                self._robot_config_noted = True
+            robo_name = trained_name
         robot_config = f'configs/robot_configs/{robo_name}.yaml'
         
         with open(robot_config, 'r') as f:

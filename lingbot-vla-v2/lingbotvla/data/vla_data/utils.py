@@ -113,6 +113,9 @@ class FeatureTransform:
         # built lazily on the first training sample, so inference never touches its assets
         self.random_aug_config = getattr(data_config, 'random_aug_config', None)
         self.random_aug = None
+        # training only: zero the normalised state with this probability (GR00T StateActionDropout)
+        self.state_dropout_prob = float(getattr(data_config, 'state_dropout_prob', 0.0) or 0.0)
+        self._state_dropout_rng, self._state_dropout_seed = None, None
 
         # keep the self.feature_to_keep in lerobot item when convert to new item
         self.feature_to_keep = set([
@@ -375,6 +378,14 @@ class FeatureTransform:
         return out_item
 
 
+    def _drop_state(self):
+        # torch seeds each dataloader worker (per epoch) identically on every rank: mix the rank in
+        seed = torch.initial_seed()
+        if seed != self._state_dropout_seed:
+            self._state_dropout_seed = seed
+            self._state_dropout_rng = np.random.default_rng([seed % (2**63), int(os.environ.get("RANK", 0)), 7])
+        return self._state_dropout_rng.random() < self.state_dropout_prob
+
     def apply(self, item, policy_eval=False):
         w_action = not policy_eval
         if w_action:
@@ -402,6 +413,10 @@ class FeatureTransform:
 
         if self.normalizer is not None:
             item = self.normalizer.normalize(item)
+        if w_action and self.state_dropout_prob > 0 and self._drop_state():
+            for state_feature in self.states:
+                if state_feature in item:
+                    item[state_feature] = torch.zeros_like(item[state_feature])
 
         if self.return_item_befor_padding:
             return item

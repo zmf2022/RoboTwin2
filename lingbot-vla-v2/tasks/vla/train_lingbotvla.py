@@ -299,6 +299,12 @@ class MyTrainingArguments(TrainingArguments):
         metadata={"help": "Leave chunk steps past the episode end (action_is_pad, filled with the last action) out "
                           "of the action loss, as LeRobot's pi0 does."},
     )
+    state_emb_dropout_prob: Optional[float] = field(
+        default=None,
+        metadata={"help": "Training only: probability that a sample's state token embedding is zeroed in the action "
+                          "expert (GR00T N1.7 action head). None = data.state_dropout_prob: GR00T fine-tuning applies its "
+                          "state_dropout_prob (0.2) both to the normalised state and to the state features."},
+    )
     precompute_grid_thw: bool = field(
         default=False,
         metadata={"help": "Whether to precompute and cache grid_thw-derived tensors (rotary_pos_emb, window_index, etc.) for fixed-resolution training."},
@@ -351,6 +357,11 @@ class MyDataArguments(DataArguments):
         default=False,
         metadata={"help": "Whether to use future image."},
     )
+    state_dropout_prob: float = field(
+        default=0.0,
+        metadata={"help": "Training only: probability that a sample's (normalised) proprioceptive state is zeroed, as "
+                          "GR00T's StateActionDropout (default 0.2 there), so the policy also has to act from the images."},
+    )
 
 
 @dataclass
@@ -391,6 +402,11 @@ def main():
 
     logger.info_rank0("Prepare model")
     config_kwargs = {**vars(args.model), **vars(args.train)}
+    if config_kwargs.get("state_emb_dropout_prob") is None:
+        config_kwargs["state_emb_dropout_prob"] = float(getattr(args.data, "state_dropout_prob", 0.0) or 0.0)
+    if config_kwargs["state_emb_dropout_prob"] > 0 or getattr(args.data, "state_dropout_prob", 0.0) > 0:
+        logger.info_rank0(f"state dropout: normalised state p={args.data.state_dropout_prob}, "
+                          f"state token embedding p={config_kwargs['state_emb_dropout_prob']}")
     config_registry = get_config_registry()
 
     config_key = args.model.config_key
