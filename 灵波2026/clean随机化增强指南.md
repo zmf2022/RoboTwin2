@@ -8,12 +8,13 @@
 
 机械臂和任务物体保持不动，动作标签不变。当前帧和 future 帧共用同一组增强参数。
 
-实现：`lingbot-vla-v2/lingbotvla/data/vla_data/random_aug.py`；脚本与配置：`scripts/random_aug/`。两份配置：
+实现：`lingbot-vla-v2/lingbotvla/data/vla_data/random_aug.py`；脚本与配置：`scripts/random_aug/`。三份配置：
 
 | 配置 | 用途 |
 |---|---|
 | `random_aug.yaml` | 从基座起训（如 LoRA 第一阶段） |
 | `random_aug_stage2.yaml` | 第二阶段，从全参 checkpoint 起训（§3.2） |
+| `random_aug_onepass.yaml` | 从基础模型一次训完（`run_train_onepass_4gpu.sh`）：`random_aug_stage2.yaml` + PatchWAM 外观增强，光照关掉 |
 
 ## 1. 生成素材（一次性，仓库根目录）
 
