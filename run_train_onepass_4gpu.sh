@@ -7,7 +7,7 @@
 # - 增强 random_aug_onepass.yaml：v3 场景增强（纹理、干扰物、指令改写）+ PatchWAM 外观增强（代替光照）；另开 image_augment
 # - EMA 0.99（只额外存 ema/、ema_hf_ckpt/）
 # 学习率 1e-4 -> 1e-5 余弦，前 2% 预热；3 万步约 3.2 天（约 9.3 s/步）；每 5000 步存一个，6 个全部保留（每个约 126G，共约 760G）。
-# 冒烟（必须先跑，几分钟）: STEPS=20 SAVE=20 OUT=output_onepass_smoke/ bash run_train_onepass_4gpu.sh
+# 冒烟（可选，几分钟）: STEPS=20 SAVE=20 OUT=output_onepass_smoke/ bash run_train_onepass_4gpu.sh
 #   日志里应有 non-idle filter ... 431174 of 548893 frames kept、state dropout: normalised state p=0.2, state token embedding p=0.2、
 #   random_aug: prob=0.5 ...、EMA decay=0.99 every=10；从基础模型起训，前几步 VLA_Loss 明显高于 0.1（0.01-0.03 说明误加载了训过的权重）；
 #   <OUT>/lingbotvla_cli.yaml 里 data_name: robotwin_rel；global_step_20 下有 hf_ckpt 和 ema_hf_ckpt

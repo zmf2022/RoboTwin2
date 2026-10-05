@@ -8,11 +8,10 @@
 
 机械臂和任务物体保持不动，动作标签不变。当前帧和 future 帧共用同一组增强参数。
 
-实现：`lingbot-vla-v2/lingbotvla/data/vla_data/random_aug.py`；脚本与配置：`scripts/random_aug/`。三份配置：
+实现：`lingbot-vla-v2/lingbotvla/data/vla_data/random_aug.py`；脚本与配置：`scripts/random_aug/`。两份配置：
 
 | 配置 | 用途 |
 |---|---|
-| `random_aug.yaml` | 从基座起训（如 LoRA 第一阶段） |
 | `random_aug_stage2.yaml` | 第二阶段，从全参 checkpoint 起训（§3.2） |
 | `random_aug_onepass.yaml` | 从基础模型一次训完（`run_train_onepass_4gpu.sh`）：`random_aug_stage2.yaml` + PatchWAM 外观增强，光照关掉 |
 
@@ -46,7 +45,7 @@ mkdir -p data/dtd && curl -L -C - -o data/dtd/dtd-r1.0.1.tar.gz https://thor.rob
 python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 ```
 
-每个样本占两行，上面是原图，下面是增强后。四列依次是头部、左腕、右腕、头部 future 帧；终端会打印改写前后的指令。调参改 `scripts/random_aug/random_aug.yaml`（注释即说明），未写的参数取 `random_aug.py` 里的 `DEFAULTS`。
+每个样本占两行，上面是原图，下面是增强后。四列依次是头部、左腕、右腕、头部 future 帧；终端会打印改写前后的指令。调参改 `scripts/random_aug/random_aug_onepass.yaml`（注释即说明），未写的参数取 `random_aug.py` 里的 `DEFAULTS`。
 
 ## 3. 第二阶段训练
 
@@ -63,7 +62,7 @@ python scripts/random_aug/preview.py --out random_aug_preview.png --num 6
 
 | 改动 | 原因 |
 |---|---|
-| 去掉 teacher_clean（深度/视频教师看干净画面） | 学生必须从表征里抹掉贴图干扰物，只能学"是否贴图"；训练里没被抹掉的物体全是任务物体，真实杂物不是贴图，就被当成目标。没有 teacher_clean 的 `random_aug.yaml`（LoRA）在同样的任务上不崩 |
+| 去掉 teacher_clean（深度/视频教师看干净画面） | 学生必须从表征里抹掉贴图干扰物，只能学"是否贴图"；训练里没被抹掉的物体全是任务物体，真实杂物不是贴图，就被当成目标。没有 teacher_clean 的早期 LoRA 配置在同样的任务上不崩 |
 | `distractor`：`prob 0.95`、`num [3, 8]`、`top_margin 0.02`、`wrist_prob 0.6`、`task_balance` | 真实杂物 98% 局都有、每画面多个、靠墙的桌面后部也有、腕部初始视角正对后部杂物；第一版只在约 35% 样本贴 1–4 个、只贴头部、不贴后部；库里积木占 1/4，按来源任务均匀抽 |
 | `mask.rim_px 2`、`arm_dilate_px 0` | 换纹理后物体和机械臂周围残留一圈白桌面，真实画面没有 |
 | `distractor.edge_blur [0.3, 0.8]` | 贴图轮廓比渲染物体锐（归一化边缘梯度 0.84 vs 任务物体 0.79、真实杂物 0.80），可用来区分贴图与真实物体；模糊后 0.80（Cut, Paste and Learn 同样随机化贴图融合） |

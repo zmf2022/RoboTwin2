@@ -245,7 +245,7 @@ class DataArguments:
         metadata={
             "help": (
                 "YAML config of the clean -> randomized scene augmentation "
-                "(lingbotvla/data/vla_data/random_aug.py, e.g. scripts/random_aug/random_aug.yaml). "
+                "(lingbotvla/data/vla_data/random_aug.py, e.g. scripts/random_aug/random_aug_onepass.yaml). "
                 "None disables it."
             )
         },

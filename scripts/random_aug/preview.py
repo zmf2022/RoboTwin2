@@ -22,7 +22,7 @@ TRAIN_KEYS = ("observation.images.camera_top", "observation.images.camera_wrist_
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default=str(REPO / "scripts/random_aug/random_aug.yaml"))
+    p.add_argument("--config", default=str(REPO / "scripts/random_aug/random_aug_onepass.yaml"))
     p.add_argument("--data", default=str(DEFAULT_DATA))
     p.add_argument("--out", default="random_aug_preview.png")
     p.add_argument("--num", type=int, default=6)

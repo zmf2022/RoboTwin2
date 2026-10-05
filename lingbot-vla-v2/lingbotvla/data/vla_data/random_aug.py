@@ -1,6 +1,6 @@
 """Clean -> randomized scene augmentation for clean-only RoboTwin training.
 
-Enabled with ``--data.random_aug_config <yaml>`` (see ``scripts/random_aug/random_aug.yaml``) and applied per
+Enabled with ``--data.random_aug_config <yaml>`` (see ``scripts/random_aug/random_aug_onepass.yaml``) and applied per
 sample in ``FeatureTransform.apply``, before the Qwen-VL image processor. From clean frames only it
 simulates the demo_randomized setting:
 
