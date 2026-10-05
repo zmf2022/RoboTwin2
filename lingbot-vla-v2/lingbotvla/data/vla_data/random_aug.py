@@ -9,8 +9,9 @@ simulates the demo_randomized setting:
 - distractor: object cut-outs from clean frames of *other* tasks pasted onto free table area
   (head camera, optionally enlarged on the wrist cameras), occluded by the arm / task objects;
 - lighting: global gain, colour temperature, gamma, spatial illumination, rare extreme light;
-- geometry: small scale / shift of the head camera (table height +-3cm);
-- instruction: LLM paraphrases of the training instruction.
+- instruction: LLM paraphrases of the training instruction;
+- appearance: PatchWAM's clean-to-randomized global appearance randomization (``appearance.py``), drawn
+  independently of ``prob`` on every camera.
 
 All parameters are sampled once per sample and shared by the current and future frame, so the
 future-frame depth / video targets stay consistent with the augmented current frame. (Giving the
@@ -31,6 +32,7 @@ import yaml
 from scipy import ndimage
 
 from ...utils import logging
+from . import appearance as appearance_aug
 
 
 logger = logging.get_logger(__name__)
@@ -122,11 +124,9 @@ DEFAULTS = {
         "spatial": 0.3,  # max illumination variation across the image
         "crazy_prob": 0.03,  # extreme coloured / dark / bright light
     },
-    "geometry": {
-        "prob": 0.5,
-        "scale": 0.04,
-        "shift": 0.02,  # fraction of the image size
-    },
+    # PatchWAM C2R appearance randomization (photometric + channel statistics + Fourier amplitude), per sample with
+    # its own probability, applied after the scene randomization; see appearance.py
+    "appearance": copy.deepcopy(appearance_aug.DEFAULTS),
     "instruction": {
         "prob": 0.5,
         "paraphrase_file": None,  # {instruction: [paraphrases]}
@@ -604,8 +604,13 @@ class RandomSceneAugmentor:
         self._augment_instruction(batch_dict, rng)
 
         images = batch_dict.get("image") or {}
-        if not images or rng.random() >= self.cfg["prob"]:
-            return batch_dict
+        if images and rng.random() < self.cfg["prob"]:
+            self._augment_scene(batch_dict, images, rng, episode_index, frame_index, future_offset)
+        if images and self.cfg["appearance"]["prob"] > 0:
+            self._augment_appearance(batch_dict, images)
+        return batch_dict
+
+    def _augment_scene(self, batch_dict, images, rng, episode_index, frame_index, future_offset):
         future = batch_dict.get("future_image") or {}
         if torch.is_tensor(episode_index):
             episode_index = int(episode_index.reshape(-1)[0])
@@ -617,7 +622,6 @@ class RandomSceneAugmentor:
         scene = {
             "background": rng.random() < cfg["background"]["prob"],
             "distractor": self.distractors is not None and rng.random() < cfg["distractor"]["prob"],
-            "geometry": rng.random() < cfg["geometry"]["prob"],
             "light": self._sample_light(rng) if rng.random() < cfg["lighting"]["prob"] else None,
             "same_texture": rng.random() < cfg["background"]["same_texture_prob"],
         }
@@ -631,7 +635,31 @@ class RandomSceneAugmentor:
             images[key] = out[0]
             if len(out) > 1:
                 future[key] = out[1]
-        return batch_dict
+
+    def _torch_gen(self):
+        # same seeding as _get_rng (per worker and epoch, rank mixed in), as a torch generator for appearance.py
+        seed = torch.initial_seed()
+        if seed != getattr(self, "_gen_seed", None):
+            self._gen_seed = seed
+            rank = int(os.environ.get("RANK", 0))
+            self._gen = torch.Generator().manual_seed((seed + 1000003 * rank) % (2**63))
+        return self._gen
+
+    def _augment_appearance(self, batch_dict, images):
+        acfg = self.cfg["appearance"]
+        gen = self._torch_gen()
+        if float(torch.rand((), generator=gen)) >= acfg["prob"]:
+            return
+        future = batch_dict.get("future_image") or {}
+        for key in list(images.keys()):
+            if self._role(key) is None:
+                continue
+            frames = [images[key]] + ([future[key]] if key in future else [])
+            arrs = torch.stack([torch.from_numpy(_to_float(f).transpose(2, 0, 1).copy()) for f in frames])  # T, C, H, W
+            out = appearance_aug.randomize_view(arrs, acfg, gen).numpy().transpose(0, 2, 3, 1)
+            images[key] = _to_like(out[0], frames[0])
+            if len(frames) > 1:
+                future[key] = _to_like(out[1], frames[1])
 
     def _augment_instruction(self, batch_dict, rng):
         icfg = self.cfg["instruction"]
@@ -679,13 +707,6 @@ class RandomSceneAugmentor:
             plans = self._plan_distractors(rng, masks[0], h, w, episode_index, ref, wrist=role == "wrist")
             for i, m in enumerate(masks):
                 arrs[i] = self._paste(arrs[i], plans, m["bg"])
-        if role == "head" and scene["geometry"]:
-            gcfg = cfg["geometry"]
-            s = 1 + rng.uniform(-gcfg["scale"], gcfg["scale"])
-            tx, ty = rng.uniform(-gcfg["shift"], gcfg["shift"], 2) * (w, h)
-            mat = cv2.getRotationMatrix2D((w / 2, h / 2), 0, s)
-            mat[:, 2] += (tx, ty)
-            arrs = [cv2.warpAffine(a, mat, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE) for a in arrs]
         if scene["light"] is not None:
             illum = self._illumination(rng, h, w)
             arrs = [self._apply_light(a, scene["light"], illum) for a in arrs]

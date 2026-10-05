@@ -36,9 +36,6 @@ lighting:
   gain: [0.6, 1.1]        # 偏暗（RawVLA：曝光是 VLA 最敏感的成像因素）
   crazy_prob: 0.03
 
-geometry:
-  prob: 0.0
-
 instruction:
   prob: 0.5
   paraphrase_file: ../../lingbot-vla-v2/assets/random_aug/instruction_paraphrases.json

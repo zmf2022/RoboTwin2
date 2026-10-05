@@ -386,7 +386,7 @@ class FeatureTransform:
             self._state_dropout_rng = np.random.default_rng([seed % (2**63), int(os.environ.get("RANK", 0)), 7])
         return self._state_dropout_rng.random() < self.state_dropout_prob
 
-    def apply(self, item, policy_eval=False):
+    def apply(self, item, policy_eval=False, future_frame_offset=None):
         w_action = not policy_eval
         if w_action:
             item['action_is_pad'] = item[f"{self.org_features['actions'][0]}_is_pad"] if not len(self.actions_convert_from_state)>0 else item[f"{self.org_features['states'][0]}_is_pad"][1:]
@@ -426,8 +426,10 @@ class FeatureTransform:
             if self.random_aug is None:
                 from .random_aug import RandomSceneAugmentor
                 self.random_aug = RandomSceneAugmentor(self.random_aug_config)
+            if future_frame_offset is None:  # the dataset's non-idle filter moves the future frame
+                future_frame_offset = self.chunk_size - 1
             self.random_aug(batch_dict, episode_index=item.get('episode_index'), frame_index=item.get('frame_index'),
-                            future_offset=self.chunk_size - 1 if self.use_future_image else None)
+                            future_offset=future_frame_offset if self.use_future_image else None)
 
         state = prepare_state(batch_dict, self.model_config.max_state_dim)
         actions = prepare_action(batch_dict, self.model_config.max_action_dim)

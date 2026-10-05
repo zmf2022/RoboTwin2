@@ -17,6 +17,7 @@ import os
 import inspect
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 from torchvision.transforms.v2 import Resize
@@ -77,6 +78,42 @@ class LeRobotDataset(BaseLeRobotDataset):
     ):
         super().__init__(repo_id, **kwargs)
         self.load_image = load_image
+        self._keep = None  # set_nonidle: global indices of the frames kept, in order
+
+    def set_nonidle(self, threshold, state_key, action_key):
+        """Drop the frames where the robot stands still, as PatchWAM's RoboTwin non-idle filter: a frame is idle when
+        no joint (grippers included) of its action (the next state) differs from its state by more than
+        ``threshold``. Samples then start only at moving frames, and the action chunk and future frame are read along
+        the remaining frames (crossing the dropped pauses). Returns the kept global indices."""
+        table = self.hf_dataset.with_format("numpy")
+        if not np.array_equal(table["index"], np.arange(len(table))):
+            raise ValueError("set_nonidle needs rows in global index order")
+        state, action = np.stack(table[state_key]), np.stack(table[action_key])
+        episode = table["episode_index"]
+        keep = np.flatnonzero(np.abs(action - state).max(-1) > threshold)
+        bounds = np.searchsorted(episode[keep], np.arange(int(episode.max()) + 2))
+        self._keep, self._keep_lo, self._keep_hi = keep, bounds[:-1], bounds[1:]
+        self._keep_pos = np.full(len(table), -1, dtype=np.int64)
+        self._keep_pos[keep] = np.arange(len(keep))
+        logger.info(f"non-idle filter (threshold {threshold}): {len(keep)} of {len(table)} frames kept "
+                    f"({100 * (1 - len(keep) / len(table)):.1f}% idle)")
+        return keep
+
+    def _get_query_indices(self, idx, ep_idx):
+        if self._keep is None:
+            return super()._get_query_indices(idx, ep_idx)
+        ep = self.meta.episodes[ep_idx]
+        ep_end = ep["dataset_to_index"]
+        pos, lo, hi = int(self._keep_pos[idx]), int(self._keep_lo[ep_idx]), int(self._keep_hi[ep_idx])
+        if pos < 0:
+            raise IndexError(f"frame {idx} was dropped by the non-idle filter")
+        query_indices, padding = {}, {}
+        for key, delta_idx in self.delta_indices.items():
+            # past the episode's last moving frame: its final frame, padded (the robot only stands still after it)
+            positions = [pos + d for d in delta_idx]
+            query_indices[key] = [int(self._keep[max(p, lo)]) if p < hi else ep_end - 1 for p in positions]
+            padding[f"{key}_is_pad"] = torch.BoolTensor([p >= hi or p < lo for p in positions])
+        return query_indices, padding
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         """
@@ -136,6 +173,11 @@ class LeRobotDataset(BaseLeRobotDataset):
         if len(self.meta.video_keys) > 0 and self.load_image:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
+            if self._keep is not None and query_indices is not None:
+                # with the non-idle filter the future frame is not at a fixed offset: random_aug needs it for the arm masks
+                key = next((k for k in self.meta.video_keys if k in query_indices), None)
+                if key is not None:
+                    item["future_frame_offset"] = query_indices[key][-1] - idx
             video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
 
@@ -215,9 +257,17 @@ class VLADataset(Dataset):
 
         self.return_item = return_item
         self.transform = transform
+        # training only: skip the frames where the robot stands still (PatchWAM's RoboTwin non-idle filter)
+        self.sample_index = None
+        idle_threshold = float(getattr(dataset_config, 'idle_threshold', 0.0) or 0.0)
+        if idle_threshold > 0 and do_nomalize and not return_item:
+            states, actions = self.feature_transform.org_features['states'], self.feature_transform.org_features['actions']
+            if len(states) != 1 or len(actions) != 1:
+                raise ValueError(f"idle_threshold needs one state and one action column, got {states} / {actions}")
+            self.sample_index = self.dataset.set_nonidle(idle_threshold, next(iter(states)), next(iter(actions)))
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.dataset) if self.sample_index is None else len(self.sample_index)
 
     def get_features(self):
         features = set()
@@ -267,7 +317,10 @@ class VLADataset(Dataset):
         return item
 
     def getitem(self, idx):
+        if self.sample_index is not None:
+            idx = int(self.sample_index[idx])
         raw_item = self.check_lerobot_item(self.dataset[idx])
+        future_frame_offset = raw_item.pop("future_frame_offset", None)
         if (
             self.use_future_image
             and "future_video_effective_fps" not in raw_item
@@ -277,7 +330,7 @@ class VLADataset(Dataset):
                 float(self.dataset_meta.fps) / float(max(1, self.chunk_size - 1)),
                 dtype=torch.float32,
             )
-        item = self.feature_transform.apply(raw_item)
+        item = self.feature_transform.apply(raw_item, future_frame_offset=future_frame_offset)
         if self.transform is not None:
             item = self.transform(item, raw_item, self.feature_transform.feature_config.images, self.feature_transform.key_mapping)
         return item

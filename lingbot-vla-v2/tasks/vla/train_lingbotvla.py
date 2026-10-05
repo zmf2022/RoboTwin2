@@ -357,6 +357,12 @@ class MyDataArguments(DataArguments):
         default=False,
         metadata={"help": "Whether to use future image."},
     )
+    idle_threshold: float = field(
+        default=0.0,
+        metadata={"help": "Training only, > 0: drop the frames where no joint (grippers included) moves by more than this "
+                          "before the next frame, as PatchWAM's RoboTwin non-idle filter: samples start only at moving "
+                          "frames and the action chunk / future frame skip the pauses. 0 = keep every frame."},
+    )
     state_dropout_prob: float = field(
         default=0.0,
         metadata={"help": "Training only: probability that a sample's (normalised) proprioceptive state is zeroed, as "
