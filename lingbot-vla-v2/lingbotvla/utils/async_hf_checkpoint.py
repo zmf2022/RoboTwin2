@@ -87,10 +87,11 @@ class AsyncHFCheckpointSaver:
         ckpt_manager = str(ckpt_manager)
         model_assets_snapshot = tuple(model_assets) if model_assets is not None else None
 
+        # the training loop submits the last checkpoint again after the loop; convert each one once
+        if checkpoint_path in self._submitted_paths:
+            _log(self.logger, "info", "[async_hf] skip duplicate checkpoint %s", checkpoint_path)
+            return
         if self.enabled:
-            if checkpoint_path in self._submitted_paths:
-                _log(self.logger, "info", "[async_hf] skip duplicate checkpoint %s", checkpoint_path)
-                return
             self._drain_finished(block=False)
             while self._pending_count() >= self.max_pending:
                 _log(
@@ -130,6 +131,7 @@ class AsyncHFCheckpointSaver:
                 best_effort=False,
             )
             self._results.append(result)
+            self._submitted_paths.add(checkpoint_path)
             if result.error:
                 self._write_failure(result)
 
