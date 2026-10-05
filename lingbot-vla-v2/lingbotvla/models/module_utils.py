@@ -282,9 +282,7 @@ def load_model_weights(
         _dispatch_buffer(model, name, buffer)
 
     if post_training:
-        # optional layers a post-training run may add on top of the checkpoint (zeroed by the trainer)
-        missing = {name for name in parameter_names if "state_hist_proj" not in name}
-        assert len(missing) == 0, f"Missing {missing} during Post-Training. This is not allowed!!!"
+        assert len(parameter_names) == 0, f"Missing {parameter_names} during Post-Training. This is not allowed!!!"
         if adanorm_time:
             logger.info_rank0(">>> Parameters in AdaNorm has been ZERO initialized.")
             exclude_keywords = [

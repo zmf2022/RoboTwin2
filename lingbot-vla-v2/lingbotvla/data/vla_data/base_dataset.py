@@ -232,18 +232,12 @@ class VLADataset(Dataset):
     def get_delta_timestamps(self, return_indices = False):
         delta_timestamps = {}
         fps = None if return_indices else self.dataset_meta.fps
-        # state_history_frames k > 0: one more state k frames back (clamped to the episode start), see
-        # FeatureTransform.apply
-        k = getattr(self.feature_transform.model_config, 'state_history_frames', 0)
         if not len(self.feature_transform.actions_convert_from_state)>0:
             for action_feature in self.feature_transform.org_features['actions']:
                 delta_timestamps[action_feature] = [t / fps if fps else t for t in range(self.chunk_size)]
-            if k > 0:
-                for state_feature in self.feature_transform.org_features['states']:
-                    delta_timestamps[state_feature] = [-k / fps if fps else -k, 0]
         else:
             for state_feature in self.feature_transform.org_features['states']:
-                delta_timestamps[state_feature] = [t / fps if fps else t for t in ([-k] if k > 0 else []) + list(range(self.chunk_size+1))]
+                delta_timestamps[state_feature] = [t / fps if fps else t for t in range(self.chunk_size+1)]
         return delta_timestamps
 
     def get_video_delta_timestamps(self):

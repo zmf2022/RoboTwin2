@@ -33,9 +33,6 @@ from deploy.websocket_client_policy import WebsocketClientPolicy  # noqa: E402
 # consecutive simulator errors (expert check / before the first action) before the client exits;
 # eval.sh then restarts the task, which resumes after the last finished episode
 MAX_ENV_ERRORS = 10
-# past joint states sent with every observation (oldest first, current last); a model trained with
-# state_history_frames k uses the one k steps back
-HISTORY_LEN = 51
 
 
 def load_task_args(task_name, task_config):
@@ -66,17 +63,13 @@ def load_task_args(task_name, task_config):
 
 def run_episode(env, model, robo_name):
     model.infer(dict(reset=True, robo_name=robo_name, path_to_pi_model=None))
-    states = []  # joint state after every step, for models trained with state_history_frames
     while env.take_action_cnt < env.step_lim:
         obs = env.get_obs()
-        if not states:
-            states.append(np.asarray(obs["joint_action"]["vector"], dtype=np.float32))
         ret = model.infer({
             "observation.images.cam_high": obs["observation"]["head_camera"]["rgb"],
             "observation.images.cam_left_wrist": obs["observation"]["left_camera"]["rgb"],
             "observation.images.cam_right_wrist": obs["observation"]["right_camera"]["rgb"],
             "observation.state": obs["joint_action"]["vector"],
-            "observation.state_history": np.stack(states[-HISTORY_LEN:]),
             "task": env.get_instruction(),
         })
         action = ret["action"]
@@ -84,8 +77,6 @@ def run_episode(env, model, robo_name):
             env.take_action(act)
             if env.eval_success:
                 return True
-            states.append(np.asarray(env.robot.get_left_arm_jointState() + env.robot.get_right_arm_jointState(),
-                                     dtype=np.float32))
     return False
 
 

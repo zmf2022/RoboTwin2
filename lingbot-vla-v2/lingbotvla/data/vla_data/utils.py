@@ -377,31 +377,6 @@ class FeatureTransform:
 
     def apply(self, item, policy_eval=False):
         w_action = not policy_eval
-        # state_history_frames k > 0: state(t) - state(t - k) goes after the padded state. Training reads state(t - k)
-        # as the extra first state frame (BaseDataset.get_delta_timestamps); at eval the client sends the episode's
-        # past states as '<state key>_history' (oldest first, current last; shorter than k + 1 -> the oldest, as
-        # LeRobot clamps to the episode start; missing -> zero difference).
-        state_hist = None
-        if getattr(self.model_config, 'state_history_frames', 0) > 0:
-            assert len(self.org_features['states']) == 1
-            sk = self.org_features['states'][0]
-            if w_action:
-                past = item[sk][0]
-                if len(self.actions_convert_from_state) > 0:  # [t - k, t, t + 1, ...]
-                    item[sk] = item[sk][1:]
-                    item[f"{sk}_is_pad"] = item[f"{sk}_is_pad"][1:]
-                    state_hist = item[sk][0] - past
-                else:  # [t - k, t]
-                    item[sk] = item[sk][1]
-                    state_hist = item[sk] - past
-            else:
-                hist = item.pop(f"{sk}_history", None)
-                cur = torch.as_tensor(item[sk])
-                if hist is None:
-                    state_hist = torch.zeros_like(cur)
-                else:
-                    hist = torch.as_tensor(hist, dtype=cur.dtype)
-                    state_hist = cur - hist[max(len(hist) - 1 - self.model_config.state_history_frames, 0)]
         if w_action:
             item['action_is_pad'] = item[f"{self.org_features['actions'][0]}_is_pad"] if not len(self.actions_convert_from_state)>0 else item[f"{self.org_features['states'][0]}_is_pad"][1:]
         else:
@@ -440,8 +415,6 @@ class FeatureTransform:
                             future_offset=self.chunk_size - 1 if self.use_future_image else None)
 
         state = prepare_state(batch_dict, self.model_config.max_state_dim)
-        if state_hist is not None:
-            state = torch.cat([state, prepare_state({"state": state_hist.to(state.dtype)}, self.model_config.max_state_dim)], dim=-1)
         actions = prepare_action(batch_dict, self.model_config.max_action_dim)
         return_image_grid_thw = getattr(self.model_config, "return_image_grid_thw", False)
         if not self.disabled_image_features:
@@ -524,8 +497,6 @@ class FeatureTransform:
         return batch_dict
 
     def unapply(self, item):
-        if 'state' in item and 'state_joint_mask' in item:  # drop the state-history part (see apply)
-            item['state'] = item['state'][..., :item['state_joint_mask'].shape[-1]]
         if not self.return_item_befor_padding:
             item = self.reverse_pad_and_concat(item)
 

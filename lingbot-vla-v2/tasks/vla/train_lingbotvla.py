@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 import re
@@ -300,12 +299,6 @@ class MyTrainingArguments(TrainingArguments):
         metadata={"help": "Leave chunk steps past the episode end (action_is_pad, filled with the last action) out "
                           "of the action loss, as LeRobot's pi0 does."},
     )
-    state_history_frames: int = field(
-        default=0,
-        metadata={"help": "If > 0, the state token also sees state(t) - state(t - k) for k = this many frames "
-                          "(clamped to the episode start), so the policy can tell e.g. a hover before a press from "
-                          "the same hover after it. Added through a zero-initialised projection."},
-    )
     precompute_grid_thw: bool = field(
         default=False,
         metadata={"help": "Whether to precompute and cache grid_thw-derived tensors (rotary_pos_emb, window_index, etc.) for fixed-resolution training."},
@@ -418,20 +411,6 @@ def main():
         config_kwargs=config_kwargs,
         moe_implementation=getattr(args.model, 'moe_implementation', None),
     )
-    if args.train.state_history_frames > 0:
-        from safetensors import safe_open
-        in_ckpt = False
-        for f in glob.glob(os.path.join(args.model.model_path, "*.safetensors")):
-            with safe_open(f, "pt") as g:
-                in_ckpt = in_ckpt or any("state_hist_proj" in k for k in g.keys())
-        if not in_ckpt:  # new layer: start as a no-op so the init model's behaviour is unchanged
-            with torch.no_grad():
-                model.model.state_hist_proj.weight.zero_()
-                model.model.state_hist_proj.bias.zero_()
-        # Muon's orthogonalised step has a fixed size whatever the gradient: keep the zero-init layer on AdamW
-        args.train.muon_exclude_name_patterns = list(args.train.muon_exclude_name_patterns or []) + ["state_hist_proj"]
-        logger.info_rank0(f"state history k={args.train.state_history_frames}, state_hist_proj "
-                          f"{'loaded' if in_ckpt else 'zero-initialised'}")
     use_depth_align = True if args.train.align_params != {} else False
     use_future_depth = args.train.align_params.get('depth', {}).get('use_future_depth', False)
     use_future_video = use_depth_align and args.train.align_params.get('use_future_video', False)

@@ -470,10 +470,6 @@ class FlowMatchingV2(FlowMatchingV1):
         self.config.initializer_range = getattr(qwenvl_with_export_config.qwen_expert_config, "initializer_range", None)
 
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        # state_history_frames > 0: the state input carries state(t) - state(t - k) after the state, added to the
-        # state token through its own projection (zero-initialised by the trainer when the init model lacks it)
-        self.state_hist_proj = (nn.Linear(self.config.max_state_dim, self.config.proj_width)
-                                if getattr(self.config, "state_history_frames", 0) > 0 else None)
         self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
         self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
         self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
@@ -767,18 +763,6 @@ class FlowMatchingV2(FlowMatchingV1):
         )
         start, end = query_spans["current_depth"]
         return hidden_states[:, start:end, :]
-
-    def embed_suffix(self, state, noisy_actions, timestep):
-        if self.state_hist_proj is None:
-            return super().embed_suffix(state, noisy_actions, timestep)
-        state, hist = state.split(self.config.max_state_dim, dim=-1)
-        time_emb, embs, pad_masks, att_masks = super().embed_suffix(state, noisy_actions, timestep)
-        if getattr(self.config, "action_fp32", False):
-            hist_emb = self._fp32_linear(self.state_hist_proj, hist)
-        else:
-            hist_emb = self.state_hist_proj(hist)
-        embs = torch.cat([embs[:, :1] + hist_emb[:, None].to(embs.dtype), embs[:, 1:]], dim=1)
-        return time_emb, embs, pad_masks, att_masks
 
     def forward(
         self,

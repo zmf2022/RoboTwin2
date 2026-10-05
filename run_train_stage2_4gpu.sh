@@ -14,7 +14,7 @@
 # EMA（openpi 的 0.99）只额外保存一份滑动平均权重（<ckpt>/ema、ema_hf_ckpt），不改变原始训练；EMA=0 关闭
 # 正式: setsid nohup bash run_train_stage2_4gpu.sh > lingbot-vla-v2/train_stage2_v3_$(date +%m%d_%H%M).log 2>&1 < /dev/null &
 # 中断后用同一命令重跑即从 $OUT 断点续训
-# 额外参数原样传给训练，如状态历史：OUT=output_stage2_v4/ bash run_train_stage2_4gpu.sh --train.state_history_frames 10
+# 额外参数原样传给训练，如 OUT=output_stage2_x/ bash run_train_stage2_4gpu.sh --train.max_steps 3000
 source /root/miniconda3/etc/profile.d/conda.sh
 conda activate robotwin
 export LD_PRELOAD=/root/miniconda3/envs/robotwin/lib/libstdc++.so.6
