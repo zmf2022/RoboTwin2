@@ -1,0 +1,32 @@
+# 合规版一次训完（run_train_onepass_c_6gpu.sh）用的训练增强（lingbotvla/data/vla_data/random_aug.py），未列出的参数取 DEFAULTS。
+# 10/09 组委会禁止：换背景/纹理、贴图/增删物体、改场景几何、重光照、生成式编辑、改指令等。这里只留亮度和颜色：
+# PatchWAM 全图外观增强（appearance）的 photometric 部分（亮度、对比度、饱和度、色相、gamma、曝光、色温），
+# 关掉噪声、模糊、通道统计重设（style，类 AdaIN）和频谱调制（fourier）。
+
+prob: 0.0                 # 场景增强（纹理、干扰物、光照）全关
+
+mask:                     # 场景增强关掉后不再用到
+  head_ref: null
+  arm_masks: null
+
+background:
+  prob: 0.0
+
+distractor:
+  prob: 0.0
+
+lighting:
+  prob: 0.0
+
+instruction:
+  prob: 0.0               # 不改写指令，也不加格式噪声
+
+appearance:               # PatchWAM C2R：每个样本 80%，各相机独立、同相机当前帧和未来帧一致
+  prob: 0.8
+  photometric:            # 其余取 PatchWAM 默认：brightness/contrast/saturation 0.4、hue 0.1、gamma [0.7, 1.4]、exposure ±0.5、色温 0.15
+    gaussian_noise_std: 0.0
+    blur_sigma: null
+  style:
+    enabled: false
+  fourier:
+    enabled: false

@@ -244,6 +244,13 @@ def _wrap_full_as_dtensor_like(full: Tensor, ref: Tensor) -> Tensor:
     return replicated.redistribute(device_mesh=mesh, placements=ref.placements)
 
 
+def _chunk_bounds(global_size: int, world_size: int, rank: int) -> Tuple[int, int]:
+    """(start, size) of ``rank``'s shard under torch.chunk splitting, as FSDP2 and DTensor Shard use."""
+    chunk = -(-global_size // world_size)
+    start = min(rank * chunk, global_size)
+    return start, min(chunk, global_size - start)
+
+
 def _get_dtensor_shard_info(p: DTensor) -> Tuple[Any, int, int, int]:
     """Extract (process_group, world_size, rank, shard_dim) from a sharded DTensor."""
     mesh = p.device_mesh
@@ -395,10 +402,7 @@ class DistributedMuon(Optimizer):
                     full_ortho = batched_newton_schulz(full_update, ns_coefficients, ns_steps, eps)
                     # Take this rank's local shard back
                     pg, ws, rk, sdim = _get_dtensor_shard_info(p)
-                    global_size = p.shape[sdim]
-                    chunk_floor = global_size // ws
-                    rem = global_size % ws
-                    start = rk * chunk_floor + min(rk, rem)
+                    start, _ = _chunk_bounds(p.shape[sdim], ws, rk)
                     local_size = update_local.shape[sdim]
                     ortho_local = full_ortho.narrow(sdim, start, local_size).contiguous()
                 else:
@@ -498,9 +502,9 @@ class DistributedMuon(Optimizer):
         gather_dim = shard_dim + 1  # +1 for the batch dim we prepended
         original_local_size = stacked_local.size(gather_dim)
 
-        # FSDP2 contiguous chunking may give different ranks different local sizes
-        # (ceil vs floor when global_dim % world_size != 0). dist.all_gather
-        # requires uniform sizes. Pad to max_local_size before gathering.
+        # FSDP2 / DTensor Shard follows torch.chunk: ranks get ceil(global_dim / world_size) rows and the last
+        # ones fewer (or none) when global_dim % world_size != 0. dist.all_gather requires uniform sizes. Pad to
+        # max_local_size before gathering.
         global_dim_size = params[0].shape[shard_dim]  # DTensor .shape = global
         max_local_size = (global_dim_size + world_size - 1) // world_size
         needs_padding = (max_local_size != original_local_size)
@@ -518,13 +522,12 @@ class DistributedMuon(Optimizer):
         del stacked_local
 
         # Reconstruct full global tensor, stripping per-rank padding if needed.
-        remainder = global_dim_size % world_size
-        if remainder == 0:
+        if global_dim_size % world_size == 0:
             stacked_full = torch.cat(gather_list, dim=gather_dim)
         else:
             real_chunks = []
             for r in range(world_size):
-                real_size = max_local_size if r < remainder else (global_dim_size // world_size)
+                real_size = _chunk_bounds(global_dim_size, world_size, r)[1]
                 real_chunks.append(gather_list[r].narrow(gather_dim, 0, real_size))
             stacked_full = torch.cat(real_chunks, dim=gather_dim)
         del gather_list
@@ -554,8 +557,7 @@ class DistributedMuon(Optimizer):
         del ortho_list
 
         # Phase 4: Local scatter + apply update
-        chunk_floor = global_dim_size // world_size
-        shard_start = rank * chunk_floor + min(rank, remainder)
+        shard_start, _ = _chunk_bounds(global_dim_size, world_size, rank)
         local_ortho_batch = stacked_ortho.narrow(
             gather_dim, shard_start, original_local_size
         ).contiguous()
