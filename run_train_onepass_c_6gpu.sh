@@ -4,6 +4,8 @@
 # - 补齐动作不计损失（mask_padded_actions，本机 A/B clean +2.8、randomized +5.1）
 # - 去掉静止帧（idle_threshold 1e-4，本机 A/B 约 +2-3）
 # - 增强 random_aug_onepass_c.yaml：只有 PatchWAM 外观增强的亮度/颜色部分；上游 image_augment 关掉（与之重复）
+# - 冻结视觉编码器（qwenvl.visual）：只有 clean 数据、没有场景增强时，ViT 训下去只会适应白桌面；冻结保住预训练的视觉表征
+#   （GR00T N1.7 微调默认 tune_visual False；第二阶段冻结 ViT 对 v3：clean 75.0 vs 74.7、randomized 50.3 vs 49.7）。语言模型照常训
 # - state 丢弃关（A/B 无收益）；优化器 muon（第一阶段用的，dist_muon 无提速且去掉专家学习率）
 # - EMA 0.99（只额外存 ema/、ema_hf_ckpt/）；学习率 1e-4 -> 1e-5 余弦，前 2% 预热
 # 6 卡：MBS 8 × 累积 5 × 6 卡 = GBS 240（4 卡版 256），约 5.8 s/步，3 万步约 2 天；每 5000 步存一个，6 个全部保留（每个约 126G，共约 760G）。
@@ -11,7 +13,8 @@
 # 冒烟（必须先跑，几分钟）: STEPS=20 SAVE=20 OUT=output_onepass_c_smoke/ bash run_train_onepass_c_6gpu.sh
 #   日志里应有 non-idle filter ... 431174 of 548893 frames kept、random_aug: prob=0.0 ... distractors=0, paraphrased instructions=0、
 #   EMA decay=0.99 every=10；从基础模型起训，前几步 VLA_Loss 明显高于 0.1（0.01-0.03 说明误加载了训过的权重）；
-#   <OUT>/lingbotvla_cli.yaml 里 data_name: robotwin_rel、optimizer: muon、state_dropout_prob: 0.0、mask_padded_actions: true；
+#   <OUT>/lingbotvla_cli.yaml 里 data_name: robotwin_rel、optimizer: muon、state_dropout_prob: 0.0、mask_padded_actions: true、
+#   freeze_vision_encoder: true；
 #   global_step_20 下有 hf_ckpt 和 ema_hf_ckpt。用完删掉 output_onepass_c_smoke/
 # 正式: setsid nohup bash run_train_onepass_c_6gpu.sh > lingbot-vla-v2/train_onepass_c_$(date +%m%d_%H%M).log 2>&1 < /dev/null &
 # 中断后用同一命令重跑即从 $OUT 断点续训；额外参数原样传给训练
@@ -40,6 +43,7 @@ bash ../scripts/train.sh ../scripts/robotwin_local.yaml \
   --train.lr 1.0e-4 --train.lr_min 1.0e-5 --train.lr_warmup_ratio 0.02 \
   --train.ema_decay $EMA --train.ema_every 10 \
   --train.mask_padded_actions true \
+  --train.freeze_vision_encoder true \
   --train.max_steps $STEPS --train.save_steps $SAVE --train.save_total_limit $KEEP \
   --train.micro_batch_size $MBS \
   --train.gradient_accumulation_steps $ACCUM \
